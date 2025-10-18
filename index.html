@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8" />
+	<link rel="stylesheet" href="/src/styles.css" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Astrotune</title>
+	<script type="module" src="/src/main.ts" defer></script>
+</head>
+
+<body x-data="musicFolderPicker()" x-init="init()">
+	<main>
+		<aside>
+			<div>
+				<button @click="selectFolder" :disabled="isLoading">
+					<span x-show="!isLoading">📁 Select Music Folder</span>
+					<span x-show="isLoading">Loading...</span>
+				</button>
+			</div>
+			<ul>
+				<template x-for="song in songs" :key="song.path">
+					<li 
+						x-text="song.name" 
+						@click="selectSong(song)">
+					</li>
+				</template>
+			</ul>
+		</aside>
+		<div>
+			<div x-show="!selectedSong">
+				<p>Select a song to play</p>
+			</div>
+			<div x-show="selectedSong">
+				<h2 x-text="selectedSong?.name"></h2>
+				<p x-text="selectedSong?.path"></p>
+			</div>
+		</div>
+	</main>
+	<footer>
+		<audio 
+			x-ref="audioPlayer"
+			:src="selectedSong ? convertFileSrc(selectedSong.path) : ''"
+			controls
+			preload="auto">
+		</audio>
+	</footer>
+
+</body>
+
+</html>

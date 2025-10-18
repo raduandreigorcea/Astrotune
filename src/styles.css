@@ -1,0 +1,35 @@
+:root {
+	--font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+	--font-size: 16px;
+	--line-height: 24px;
+	--font-weight: 400;
+
+	font-family: var(--font-family);
+	font-size: var(--font-size);
+	line-height: var(--line-height);
+
+	font-weight: var(--font-weight);
+	font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	min-block-size: 100vh;
+	display: grid;
+}
+
+footer {
+	align-self: end;
+}
+
+main {
+	display: flex;
+}
+
+li {
+	cursor: pointer;
+}
