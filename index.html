@@ -13,16 +13,30 @@
 	<main>
 		<aside>
 			<div>
-				<button @click="selectFolder" :disabled="isLoading">
-					<span x-show="!isLoading">📁 Select Music Folder</span>
+				<!-- Show folder button in aside only when no folder is selected -->
+				<button x-show="!lastFolderPath" @click="openSettings" :disabled="isLoading">
+					<span x-show="!isLoading">
+						<img src="/src/assets/folder-open.svg" alt="" class="icon" />
+						Select Music Folder
+					</span>
 					<span x-show="isLoading">Loading...</span>
 				</button>
+				
+				<!-- Show message and button when folder is selected but has no music files -->
+				<div x-show="lastFolderPath && songs.length === 0" class="no-music-message">
+					<p>⚠️ No music files found in this folder</p>
+					<button @click="selectFolder" :disabled="isLoading">
+						<span x-show="!isLoading">
+							<img src="/src/assets/folder-open.svg" alt="" class="icon" />
+							Change Folder
+						</span>
+						<span x-show="isLoading">Loading...</span>
+					</button>
+				</div>
 			</div>
 			<ul>
 				<template x-for="song in songs" :key="song.path">
-					<li 
-						x-text="song.name" 
-						@click="selectSong(song)">
+					<li x-text="song.name" @click="selectSong(song)">
 					</li>
 				</template>
 			</ul>
@@ -38,13 +52,61 @@
 		</div>
 	</main>
 	<footer>
-		<audio 
-			x-ref="audioPlayer"
-			:src="selectedSong ? convertFileSrc(selectedSong.path) : ''"
-			controls
-			preload="auto">
+		<audio x-ref="audioPlayer" :src="selectedSong ? convertFileSrc(selectedSong.path) : ''" controls preload="auto">
 		</audio>
+		<button @click="openSettings">
+			<img src="/src/assets/settings.svg" alt="" class="icon" />
+			Settings
+		</button>
 	</footer>
+
+	<dialog @click.self="closeSettings">
+		<div class="dialog-content">
+			<div class="dialog-header">
+				<h2>Settings</h2>
+				<button @click="closeSettings" class="close-button">
+					<img src="/src/assets/square-x.svg" alt="" class="icon" />
+				</button>
+			</div>
+			<div class="dialog-body">
+				<h3>Theme</h3>
+				<button @click="selectCustomTheme">
+					<img src="/src/assets/file-json.svg" alt="" class="icon" />
+					Import Custom Theme
+				</button>
+				<button @click="removeCustomTheme" x-show="customThemePath"
+					title="Remove custom theme and revert to default">
+					<img src="/src/assets/trash-2.svg" alt="" class="icon" />
+					Remove Theme
+				</button>
+				<p x-show="customThemePath" class="theme-info">
+					Current theme: <span x-text="customThemePath"></span>
+				</p>
+
+			<hr />
+			<h3>Music Folder</h3>
+			<div x-show="!lastFolderPath">
+				<button @click="selectFolder" :disabled="isLoading">
+					<span x-show="!isLoading">
+						<img src="/src/assets/folder-open.svg" alt="" class="icon" />
+						Select Music Folder
+					</span>
+					<span x-show="isLoading">Loading...</span>
+				</button>
+			</div>
+			<div x-show="lastFolderPath">
+				<p class="folder-path">Current folder: <span x-text="lastFolderPath"></span></p>
+				<button @click="selectFolder" :disabled="isLoading">
+					<span x-show="!isLoading">
+						<img src="/src/assets/folder-open.svg" alt="" class="icon" />
+						Change Folder
+					</span>
+					<span x-show="isLoading">Loading...</span>
+				</button>
+			</div>
+			</div>
+		</div>
+	</dialog>
 
 </body>
 

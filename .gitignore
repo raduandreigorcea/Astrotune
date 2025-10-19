@@ -46,3 +46,6 @@ Thumbs.db
 
 # Store data (optional - uncomment if you don't want to commit settings)
 # src-tauri/settings.json
+
+# Documentation (internal use only)
+SQLITE_USAGE.md
