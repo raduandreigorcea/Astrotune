@@ -144,7 +144,7 @@
 								
 								<!-- Playlist Menu Button -->
 								<div class="playlist-menu-container">
-									<button @click.stop="togglePlaylistMenu(playlist.id, $event)" class="menu-btn" title="Playlist options">
+									<button @click.stop="togglePlaylistMenu(playlist.id, $event)" class="menu-btn">
 										<img src="/src/assets/ellipsis.svg" alt="" class="icon-small" />
 									</button>
 									
@@ -155,8 +155,12 @@
 										class="playlist-dropdown-menu"
 									>
 										<button @click.stop="openAddSongsDialog(playlist.id)" class="menu-item">
-											<img src="/src/assets/music.svg" alt="" class="icon-small" />
+											<img src="/src/assets/music-2.svg" alt="" class="icon-small" />
 											<span>Add/Remove Songs</span>
+										</button>
+										<button @click.stop="openChangeCoverDialog(playlist.id)" class="menu-item">
+											<img src="/src/assets/image.svg" alt="" class="icon-small" />
+											<span>Change Cover</span>
 										</button>
 										<button @click.stop="deletePlaylist(playlist.id)" class="menu-item delete">
 											<img src="/src/assets/trash-2.svg" alt="" class="icon-small" />
@@ -200,10 +204,61 @@
 		</div>
 	</main>
 	<footer>
-		<audio x-ref="audioPlayer" :src="selectedSong ? convertFileSrc(selectedSong.path) : ''" controls preload="auto">
-		</audio>
-		<button @click="openSettings" class="settings-btn">
-			<img src="/src/assets/settings.svg" alt="" class="icon" />
+		<button @click="toggleShuffle" :class="{ 'active': isShuffled }" title="Shuffle">
+			<img src="/src/assets/shuffle.svg" alt="Shuffle" class="icon" />
+		</button>
+		<button @click="playPrevious" :disabled="!selectedSong" title="Previous">
+			<img src="/src/assets/skip-back.svg" alt="Previous" class="icon" />
+		</button>
+		<button @click="togglePlayPause" :disabled="!selectedSong" title="Play/Pause">
+			<img x-show="!isPlaying" src="/src/assets/play.svg" alt="Play" class="icon" />
+			<img x-show="isPlaying" src="/src/assets/pause.svg" alt="Pause" class="icon" />
+		</button>
+		<button @click="playNext" :disabled="!selectedSong" title="Next">
+			<img src="/src/assets/skip-forward.svg" alt="Next" class="icon" />
+		</button>
+		<button @click="toggleRepeat" :class="{ 'active': repeatMode !== 'off' }" title="Repeat">
+			<img x-show="repeatMode === 'off'" src="/src/assets/repeat.svg" alt="Repeat Off" class="icon" />
+			<img x-show="repeatMode === 'all'" src="/src/assets/repeat.svg" alt="Repeat All" class="icon" />
+			<img x-show="repeatMode === 'one'" src="/src/assets/repeat-1.svg" alt="Repeat One" class="icon" />
+		</button>
+		
+		<!-- Progress Bar -->
+		<div class="progress-container">
+			<span class="time-display" x-text="formatTime(currentTime)">0:00</span>
+			<input 
+				type="range" 
+				class="progress-bar"
+				min="0" 
+				:max="duration || 0"
+				:value="currentTime"
+				@input="seek(parseFloat($event.target.value))"
+				:disabled="!selectedSong"
+			/>
+			<span class="time-display" x-text="formatTime(duration)">0:00</span>
+		</div>
+		
+		<!-- Volume Control -->
+		<div class="volume-container">
+			<button @click="toggleMute" title="Mute">
+				<img x-show="!isMuted && volume > 0.5" src="/src/assets/volume-2.svg" alt="Volume High" class="icon" />
+				<img x-show="!isMuted && volume > 0 && volume <= 0.5" src="/src/assets/volume-1.svg" alt="Volume Low" class="icon" />
+				<img x-show="!isMuted && volume === 0" src="/src/assets/volume.svg" alt="Volume Zero" class="icon" />
+				<img x-show="isMuted" src="/src/assets/volume-off.svg" alt="Muted" class="icon" />
+			</button>
+			<input 
+				type="range" 
+				class="volume-slider"
+				min="0" 
+				max="1"
+				step="0.01"
+				:value="isMuted ? 0 : volume"
+				@input="setVolume(parseFloat($event.target.value))"
+			/>
+		</div>
+		
+		<button @click="openSettings" class="settings-btn" title="Settings">
+			<img src="/src/assets/settings.svg" alt="Settings" class="icon" />
 		</button>
 	</footer>
 
@@ -218,18 +273,38 @@
 			</div>
 			<div class="dialog-body">
 				<h3>Theme</h3>
-				<button @click="selectCustomTheme">
-					<img src="/src/assets/file-json.svg" alt="" class="icon" />
-					Import Custom Theme
-				</button>
-				<button @click="removeCustomTheme" x-show="customThemePath"
-					title="Remove custom theme and revert to default">
-					<img src="/src/assets/trash-2.svg" alt="" class="icon" />
-					Remove Theme
-				</button>
-				<p x-show="customThemePath" class="theme-info">
-					Current theme: <span x-text="customThemePath"></span>
-				</p>
+				
+				<!-- Saved Themes List -->
+				<div x-show="savedThemes.length > 0" class="saved-themes-list">
+					<h4>Saved Themes</h4>
+					<template x-for="theme in savedThemes" :key="theme.id">
+						<div class="theme-item" :class="{ 'active': activeThemeId === theme.id }">
+							<span x-text="theme.name" class="theme-name"></span>
+							<div class="theme-actions">
+								<button @click="applyTheme(theme.id)" class="apply-btn" :disabled="activeThemeId === theme.id">
+									<span x-show="activeThemeId !== theme.id">Apply</span>
+									<span x-show="activeThemeId === theme.id">Active</span>
+								</button>
+								<button @click="deleteSavedTheme(theme.id)" class="icon-btn">
+									<img src="/src/assets/trash-2.svg" alt="Delete" class="icon-small" />
+								</button>
+							</div>
+						</div>
+					</template>
+				</div>
+
+				<!-- Theme Actions -->
+				<div class="theme-buttons">
+					<button @click="saveCurrentTheme">
+						<img src="/src/assets/file-json.svg" alt="" class="icon" />
+						Import Theme
+					</button>
+					<button @click="removeCustomTheme" x-show="activeThemeId"
+						title="Remove theme and revert to default">
+						<img src="/src/assets/trash-2.svg" alt="" class="icon" />
+						Reset to Default
+					</button>
+				</div>
 
 				<hr />
 				<h3>Music Folder</h3>

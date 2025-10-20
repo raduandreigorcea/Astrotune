@@ -22,6 +22,13 @@ type PlaylistWithSongs = Playlist & {
 	songs: Song[];
 };
 
+type SavedTheme = {
+	id: string; // Unique identifier (timestamp-based)
+	name: string; // User-given name
+	cssContent: string; // The CSS content stored as string
+	createdAt: number; // Timestamp
+};
+
 Alpine.data("musicFolderPicker", () => ({
 	// Database
 	db: null as Database | null,
@@ -35,8 +42,10 @@ Alpine.data("musicFolderPicker", () => ({
 	activeTab: "songs" as "songs" | "playlists",
 	searchQuery: "",
 	
-	// Theme
-	customThemePath: null as string | null,
+	// Theme management
+	savedThemes: [] as SavedTheme[],
+	activeThemeId: null as string | null,
+	customThemePath: null as string | null, // Legacy support
 	
 	// Dialogs
 	settingsDialog: null as HTMLDialogElement | null,
@@ -62,6 +71,18 @@ Alpine.data("musicFolderPicker", () => ({
 	
 	// Auto-sync state
 	autoSyncInterval: null as number | null,
+
+	// Audio controls state
+	isPlaying: false,
+	currentTime: 0,
+	duration: 0,
+	volume: 1,
+	isMuted: false,
+	isShuffled: false,
+	repeatMode: "off" as "off" | "one" | "all", // off, repeat one, repeat all
+	currentIndex: 0,
+	positionUpdateInterval: null as number | null,
+	lastUpdateTime: 0,
 
 	// Get cover image path for display
 	getCoverImagePath(coverImage: string | undefined): string | null {
@@ -101,6 +122,12 @@ Alpine.data("musicFolderPicker", () => ({
 			this.playlistDialog = document.querySelector("dialog#playlist");
 			this.confirmDeleteDialog = document.querySelector("dialog#confirm-delete");
 			
+			// Initialize Rust audio player
+			await invoke("init_audio_player");
+			
+			// Start position update interval
+			this.startPositionUpdate();
+			
 			// Initialize database
 			await this.initDatabase();
 			
@@ -120,7 +147,19 @@ Alpine.data("musicFolderPicker", () => ({
 			// Load playlists
 			await this.loadPlaylists();
 			
-			// Load custom theme if saved
+			// Restore selected playlist if saved
+			const savedPlaylistId = await store.get<number>("selectedPlaylistId");
+			if (savedPlaylistId) {
+				const playlist = this.playlists.find(p => p.id === savedPlaylistId);
+				if (playlist) {
+					await this.selectPlaylist(playlist);
+				}
+			}
+			
+			// Load saved themes
+			await this.loadSavedThemes();
+			
+			// Load custom theme if saved (legacy support)
 			const savedThemePath = await store.get<string>("customThemePath");
 			if (savedThemePath) {
 				await this.loadCustomTheme(savedThemePath);
@@ -438,6 +477,239 @@ Alpine.data("musicFolderPicker", () => ({
 	// Set the currently selected song for playback
 	selectSong(song: Song) {
 		this.selectedSong = song;
+		this.loadAndPlaySong(song);
+	},
+
+	// ========== AUDIO CONTROLS ==========
+
+	// Start polling for position updates
+	startPositionUpdate() {
+		if (this.positionUpdateInterval) {
+			clearInterval(this.positionUpdateInterval);
+		}
+		
+		this.lastUpdateTime = Date.now();
+		
+		this.positionUpdateInterval = window.setInterval(async () => {
+			if (this.selectedSong) {
+				try {
+					const now = Date.now();
+					const elapsed = (now - this.lastUpdateTime) / 1000; // seconds
+					this.lastUpdateTime = now;
+					
+					// Check if audio finished
+					const finished = await invoke<boolean>("is_audio_finished");
+					if (finished && this.isPlaying) {
+						this.handleSongEnded();
+						return;
+					}
+					
+					// Update playing state
+					const playing = await invoke<boolean>("is_audio_playing");
+					this.isPlaying = playing;
+					
+					// Update position if playing
+					if (this.isPlaying && this.currentTime < this.duration) {
+						this.currentTime = Math.min(this.currentTime + elapsed, this.duration);
+					}
+				} catch (error) {
+					console.error("Error updating position:", error);
+				}
+			}
+		}, 100); // Update every 100ms
+	},
+
+	// Load and play a song
+	async loadAndPlaySong(song: Song) {
+		try {
+			// Get duration first
+			const duration = await invoke<number>("get_audio_duration", { path: song.path });
+			this.duration = duration;
+			this.currentTime = 0;
+			this.lastUpdateTime = Date.now();
+			
+			// Load the audio file
+			await invoke("load_audio", { path: song.path });
+			
+			// Find current index in the current list
+			const currentList = this.selectedPlaylist?.songs || this.filteredSongs;
+			this.currentIndex = currentList.findIndex(s => s.id === song.id);
+			
+			// Play the audio
+			await invoke("play_audio");
+			this.isPlaying = true;
+			
+			console.log(`Playing: ${song.title} (${this.formatTime(duration)})`);
+		} catch (error) {
+			console.error("Error playing song:", error);
+		}
+	},
+
+	// Toggle play/pause
+	async togglePlayPause() {
+		try {
+			if (this.isPlaying) {
+				await invoke("pause_audio");
+				this.isPlaying = false;
+			} else {
+				await invoke("play_audio");
+				this.isPlaying = true;
+			}
+		} catch (error) {
+			console.error("Error toggling playback:", error);
+		}
+	},
+
+	// Play next song
+	playNext() {
+		const currentList = this.selectedPlaylist?.songs || this.filteredSongs;
+		if (currentList.length === 0) return;
+
+		let nextIndex: number;
+		
+		if (this.isShuffled) {
+			// Random next song
+			nextIndex = Math.floor(Math.random() * currentList.length);
+		} else {
+			// Next in order
+			nextIndex = this.currentIndex + 1;
+			if (nextIndex >= currentList.length) {
+				if (this.repeatMode === "all") {
+					nextIndex = 0; // Loop back to start
+				} else {
+					return; // Don't play if at end and not repeating
+				}
+			}
+		}
+
+		const nextSong = currentList[nextIndex];
+		if (nextSong) {
+			this.selectSong(nextSong);
+		}
+	},
+
+	// Play previous song
+	async playPrevious() {
+		const currentList = this.selectedPlaylist?.songs || this.filteredSongs;
+		if (currentList.length === 0) return;
+
+		// If more than 3 seconds into the song, restart it instead
+		if (this.currentTime > 3) {
+			try {
+				await invoke("seek_audio", { position: 0 });
+				this.currentTime = 0;
+			} catch (error) {
+				console.error("Error seeking:", error);
+			}
+			return;
+		}
+
+		let prevIndex: number;
+		
+		if (this.isShuffled) {
+			// Random previous song
+			prevIndex = Math.floor(Math.random() * currentList.length);
+		} else {
+			// Previous in order
+			prevIndex = this.currentIndex - 1;
+			if (prevIndex < 0) {
+				if (this.repeatMode === "all") {
+					prevIndex = currentList.length - 1; // Loop to end
+				} else {
+					prevIndex = 0; // Stay at first song
+				}
+			}
+		}
+
+		const prevSong = currentList[prevIndex];
+		if (prevSong) {
+			this.selectSong(prevSong);
+		}
+	},
+
+	// Handle when a song ends
+	async handleSongEnded() {
+		if (this.repeatMode === "one") {
+			// Repeat the same song
+			try {
+				await invoke("seek_audio", { position: 0 });
+				await invoke("play_audio");
+				this.currentTime = 0;
+			} catch (error) {
+				console.error("Error repeating song:", error);
+			}
+		} else {
+			// Play next song
+			this.playNext();
+		}
+	},
+
+	// Toggle shuffle mode
+	toggleShuffle() {
+		this.isShuffled = !this.isShuffled;
+		console.log(`Shuffle: ${this.isShuffled ? "ON" : "OFF"}`);
+	},
+
+	// Toggle repeat mode (cycles through: off -> all -> one -> off)
+	toggleRepeat() {
+		if (this.repeatMode === "off") {
+			this.repeatMode = "all";
+		} else if (this.repeatMode === "all") {
+			this.repeatMode = "one";
+		} else {
+			this.repeatMode = "off";
+		}
+		console.log(`Repeat: ${this.repeatMode}`);
+	},
+
+	// Set volume (0 to 1)
+	async setVolume(value: number) {
+		try {
+			this.volume = Math.max(0, Math.min(1, value));
+			
+			// Only update actual audio volume if not muted
+			if (!this.isMuted) {
+				await invoke("set_audio_volume", { volume: this.volume });
+			}
+		} catch (error) {
+			console.error("Error setting volume:", error);
+		}
+	},
+
+	// Toggle mute
+	async toggleMute() {
+		try {
+			if (this.isMuted) {
+				// Unmute: restore the volume level
+				await invoke("set_audio_volume", { volume: this.volume });
+				this.isMuted = false;
+			} else {
+				// Mute: set audio to 0 but keep volume value
+				await invoke("set_audio_volume", { volume: 0 });
+				this.isMuted = true;
+			}
+		} catch (error) {
+			console.error("Error toggling mute:", error);
+		}
+	},
+
+	// Seek to specific time
+	async seek(time: number) {
+		try {
+			await invoke("seek_audio", { position: time });
+			this.currentTime = time;
+			this.lastUpdateTime = Date.now(); // Reset timer after seeking
+		} catch (error) {
+			console.error("Error seeking:", error);
+		}
+	},
+
+	// Format time in MM:SS
+	formatTime(seconds: number): string {
+		if (!isFinite(seconds)) return "0:00";
+		const mins = Math.floor(seconds / 60);
+		const secs = Math.floor(seconds % 60);
+		return `${mins}:${secs.toString().padStart(2, '0')}`;
 	},
 
 	// ========== PLAYLIST MANAGEMENT ==========
@@ -674,6 +946,11 @@ Alpine.data("musicFolderPicker", () => ({
 			// Switch to songs tab to show the playlist songs
 			this.activeTab = "songs";
 
+			// Save selected playlist ID to store
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			await store.set("selectedPlaylistId", playlist.id);
+			await store.save();
+
 			console.log(`Loaded playlist "${playlist.name}" with ${this.selectedPlaylist.songs.length} songs`);
 		} catch (error) {
 			console.error("Error loading playlist songs:", error);
@@ -684,6 +961,13 @@ Alpine.data("musicFolderPicker", () => ({
 	selectAllSongs() {
 		this.selectedPlaylist = null;
 		this.activeTab = "songs";
+		
+		// Clear selected playlist ID from store
+		load("settings.json", { autoSave: true, defaults: {} }).then(async (store) => {
+			await store.set("selectedPlaylistId", null);
+			await store.save();
+		});
+		
 		console.log("Viewing all songs");
 	},
 
@@ -742,6 +1026,60 @@ Alpine.data("musicFolderPicker", () => ({
 			}
 		} catch (error) {
 			console.error("Error loading playlist for editing:", error);
+		}
+	},
+
+	// Open dialog to change playlist cover
+	async openChangeCoverDialog(playlistId: number) {
+		try {
+			this.activePlaylistMenu = null;
+			
+			const playlist = this.playlists.find(p => p.id === playlistId);
+			if (!playlist) {
+				console.error("Playlist not found");
+				return;
+			}
+
+			// Select new cover image
+			const selectedFile = await open({
+				directory: false,
+				multiple: false,
+				title: `Change Cover for "${playlist.name}"`,
+				filters: [{
+					name: "Images",
+					extensions: ["jpg", "jpeg", "png", "webp"]
+				}]
+			});
+
+			if (selectedFile && this.db) {
+				// Process the new cover image
+				this.playlistCoverImage = selectedFile as string;
+				const optimizedCover = await this.processCoverImage();
+				
+				if (optimizedCover) {
+					// Update the cover in the database
+					await this.db.execute(
+						"UPDATE playlists SET cover_image = ? WHERE id = ?",
+						[optimizedCover, playlistId]
+					);
+					
+					console.log(`Updated cover for playlist "${playlist.name}"`);
+					
+					// Reload playlists to show the new cover
+					await this.loadPlaylists();
+					
+					// If this playlist is currently selected, update it
+					if (this.selectedPlaylist && this.selectedPlaylist.id === playlistId) {
+						this.selectedPlaylist.coverImage = optimizedCover;
+					}
+				}
+				
+				// Reset cover image state
+				this.playlistCoverImage = null;
+			}
+		} catch (error) {
+			console.error("Error changing playlist cover:", error);
+			alert("Failed to change cover. Please try again.");
 		}
 	},
 
@@ -805,7 +1143,139 @@ Alpine.data("musicFolderPicker", () => ({
 
 	// ========== THEME MANAGEMENT ==========
 
-	// Open file picker to select a custom CSS theme file
+	// Load saved themes from store
+	async loadSavedThemes() {
+		try {
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			const themes = await store.get<SavedTheme[]>("savedThemes");
+			this.savedThemes = themes || [];
+			
+			const activeId = await store.get<string>("activeThemeId");
+			if (activeId) {
+				await this.applyTheme(activeId);
+			}
+		} catch (error) {
+			console.error("Error loading saved themes:", error);
+		}
+	},
+
+	// Save a new theme
+	async saveCurrentTheme() {
+		try {
+			// Select CSS file to import
+			const selectedFile = await open({
+				directory: false,
+				multiple: false,
+				title: "Import Theme CSS File",
+				filters: [{
+					name: "CSS Files",
+					extensions: ["css"]
+				}]
+			});
+
+			if (!selectedFile) {
+				return;
+			}
+
+			const cssContent = await readTextFile(selectedFile as string);
+			
+			// Extract filename without extension as theme name
+			const filePath = selectedFile as string;
+			const fileName = filePath.split(/[/\\]/).pop() || "Theme";
+			const themeName = fileName.replace(/\.css$/i, "");
+			
+			// Create new theme object
+			const newTheme: SavedTheme = {
+				id: `theme_${Date.now()}`,
+				name: themeName,
+				cssContent: cssContent,
+				createdAt: Date.now()
+			};
+
+			// Add to saved themes
+			this.savedThemes.push(newTheme);
+
+			// Save to store
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			await store.set("savedThemes", this.savedThemes);
+			await store.save();
+
+			console.log(`Imported and saved theme: ${newTheme.name}`);
+			
+			// Apply the newly saved theme
+			await this.applyTheme(newTheme.id);
+		} catch (error) {
+			console.error("Error importing theme:", error);
+		}
+	},
+
+	// Apply a saved theme by ID
+	async applyTheme(themeId: string) {
+		try {
+			const theme = this.savedThemes.find(t => t.id === themeId);
+			if (!theme) {
+				console.error("Theme not found:", themeId);
+				return;
+			}
+
+			// Remove existing custom theme if present
+			const existingTheme = document.getElementById("custom-theme");
+			if (existingTheme) {
+				existingTheme.remove();
+			}
+
+			// Create and append a new style element with the custom CSS
+			const styleElement = document.createElement("style");
+			styleElement.id = "custom-theme";
+			styleElement.textContent = theme.cssContent;
+			document.head.appendChild(styleElement);
+			
+			this.activeThemeId = themeId;
+
+			// Save active theme to store
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			await store.set("activeThemeId", themeId);
+			await store.save();
+
+			console.log(`Applied theme: ${theme.name}`);
+			this.closeSettings();
+		} catch (error) {
+			console.error("Error applying theme:", error);
+		}
+	},
+
+	// Remove a saved theme
+	async deleteSavedTheme(themeId: string) {
+		try {
+			const theme = this.savedThemes.find(t => t.id === themeId);
+			if (!theme) {
+				return;
+			}
+
+			if (!confirm(`Delete theme "${theme.name}"?`)) {
+				return;
+			}
+
+			// Remove from array
+			this.savedThemes = this.savedThemes.filter(t => t.id !== themeId);
+
+			// If this was the active theme, remove it
+			if (this.activeThemeId === themeId) {
+				await this.removeCustomTheme();
+			}
+
+			// Save to store
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			await store.set("savedThemes", this.savedThemes);
+			await store.save();
+
+			console.log(`Deleted theme: ${theme.name}`);
+		} catch (error) {
+			console.error("Error deleting theme:", error);
+		}
+	},
+
+	// Legacy: Select custom theme from file (one-time use)
 	async selectCustomTheme() {
 		try {
 			const selectedFile = await open({
@@ -822,24 +1292,7 @@ Alpine.data("musicFolderPicker", () => ({
 				return;
 			}
 
-			// Save the selected theme path
-			const store = await load("settings.json", { autoSave: true, defaults: {} });
-			await store.set("customThemePath", selectedFile);
-			
-			await this.loadCustomTheme(selectedFile as string);
-			
-			// Close the settings dialog automatically
-			this.closeSettings();
-		} catch (error) {
-			console.error("Error selecting custom theme:", error);
-		}
-	},
-
-	// Load and apply a custom CSS theme
-	async loadCustomTheme(themePath: string) {
-		try {
-			// Read the CSS file content
-			const cssContent = await readTextFile(themePath);
+			const cssContent = await readTextFile(selectedFile as string);
 			
 			// Remove existing custom theme if present
 			const existingTheme = document.getElementById("custom-theme");
@@ -853,10 +1306,38 @@ Alpine.data("musicFolderPicker", () => ({
 			styleElement.textContent = cssContent;
 			document.head.appendChild(styleElement);
 			
+			this.customThemePath = selectedFile as string;
+			this.activeThemeId = null;
+
+			// Clear active theme from store
+			const store = await load("settings.json", { autoSave: true, defaults: {} });
+			await store.delete("activeThemeId");
+			await store.save();
+			
+			this.closeSettings();
+		} catch (error) {
+			console.error("Error selecting custom theme:", error);
+		}
+	},
+
+	// Legacy: Load custom theme (for backward compatibility)
+	async loadCustomTheme(themePath: string) {
+		try {
+			const cssContent = await readTextFile(themePath);
+			
+			const existingTheme = document.getElementById("custom-theme");
+			if (existingTheme) {
+				existingTheme.remove();
+			}
+
+			const styleElement = document.createElement("style");
+			styleElement.id = "custom-theme";
+			styleElement.textContent = cssContent;
+			document.head.appendChild(styleElement);
+			
 			this.customThemePath = themePath;
 		} catch (error) {
 			console.error("Error loading custom theme:", error);
-			// If theme file doesn't exist or can't be loaded, remove it from store
 			const store = await load("settings.json", { autoSave: true, defaults: {} });
 			await store.delete("customThemePath");
 			await store.save();
@@ -872,12 +1353,13 @@ Alpine.data("musicFolderPicker", () => ({
 				existingTheme.remove();
 			}
 
-			// Remove from store and explicitly save
 			const store = await load("settings.json", { autoSave: true, defaults: {} });
 			await store.delete("customThemePath");
+			await store.delete("activeThemeId");
 			await store.save();
 			
 			this.customThemePath = null;
+			this.activeThemeId = null;
 		} catch (error) {
 			console.error("Error removing custom theme:", error);
 		}

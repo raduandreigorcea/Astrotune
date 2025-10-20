@@ -49,3 +49,11 @@ Thumbs.db
 
 # Documentation (internal use only)
 SQLITE_USAGE.md
+
+# Installers and binaries
+*.msi
+*.exe
+*.dmg
+*.pkg
+*.deb
+*.rpm
