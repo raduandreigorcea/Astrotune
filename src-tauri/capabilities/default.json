@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "store:allow-get",
+    "store:allow-set",
+    "store:allow-save",
+    "store:allow-load",
+    "store:allow-delete",
+    "store:allow-keys",
+    "store:allow-values",
+    "store:allow-entries",
+    "store:allow-has",
+    "store:allow-clear",
+  "dialog:allow-open",
+  "fs:allow-read-dir",
+  "fs:allow-read-file",
+  "fs:allow-exists",
+  "sql:allow-load",
+  "sql:allow-execute",
+  "sql:default"
+  ]
+}

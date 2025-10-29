@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="/src/styles.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Astrotune</title>
+  <script type="module" src="/src/main.ts" defer></script>
+</head>
+
+<body x-data="{ sidebarVisible: true, settingsOpen: false }">
+  <div class="app-container">
+    <!-- Sidebar -->
+    <aside class="sidebar" 
+      :class="{ 'hidden': !sidebarVisible }"
+      x-data="{ ...musicLibrary(), activeTab: 'songs' }">
+
+      <!-- Tab Navigation -->
+      <div class="tab-nav">
+        <button @click="activeTab = 'songs'" :class="{ 'active': activeTab === 'songs' }" class="tab-button">
+          <img src="/src/assets/file-music.svg" alt="Songs">
+          <span>Songs</span>
+        </button>
+        <button @click="activeTab = 'playlists'" :class="{ 'active': activeTab === 'playlists' }" class="tab-button" :disabled="songs.length === 0">
+          <img src="/src/assets/list.svg" alt="Playlists">
+          <span>Playlists</span>
+        </button>
+      </div>
+
+      <!-- Songs Tab Content -->
+
+      <div x-show="activeTab === 'songs'" class="tab-content">
+
+        <template x-if="songs.length > 0">
+          <div class="search-box">
+            <input type="text" 
+                   placeholder="Search songs..." 
+                   x-model="searchQuery"
+                   @input="searchSongs()">
+          </div>
+        </template>
+
+        <!-- Add Directory Button (only if no songs) -->
+        <template x-if="songs.length === 0">
+          <div class="action-buttons">
+            <button @click="selectDirectory()" 
+                    :disabled="isScanning"
+                    class="btn-add-music">
+              <img src="/src/assets/folder-open.svg" alt="Add Music">
+              <span x-text="isScanning ? 'Scanning...' : 'Add Music Folder'"></span>
+            </button>
+            <template x-if="isScanning">
+              <div class="progress-bar-import">
+                <div class="progress-bar-track">
+                  <div class="progress-bar-fill" :style="`width: ${scanTotal > 0 ? (scanProgress / scanTotal * 100) : 0}%`"></div>
+                </div>
+                <div class="progress-bar-label" x-text="scanTotal > 0 ? `Scanning ${scanProgress} / ${scanTotal}` : 'Scanning...'"></div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <!-- Songs List -->
+        <div class="song-list">
+          <template x-if="filteredSongs.length === 0">
+            <div class="empty-state">
+              <img src="/src/assets/music.svg" alt="No songs">
+              <p>No songs found</p>
+              <p class="empty-hint">Click "Add Music Folder" to import your music</p>
+            </div>
+          </template>
+
+          <template x-for="song in filteredSongs" :key="song.id">
+            <div class="song-item">
+              <img src="/src/assets/music.svg" alt="Song">
+              <div class="song-info">
+                <div class="song-title" x-text="song.title"></div>
+                <div class="song-artist" x-text="song.artist"></div>
+              </div>
+              <span class="song-duration" x-text="formatDuration(song.duration)"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- Playlists Tab Content -->
+      <div x-show="activeTab === 'playlists'" class="tab-content" x-data="{ showNewPlaylist: false }">
+        <!-- Create Playlist -->
+        <div class="action-buttons">
+          <button @click="showNewPlaylist = !showNewPlaylist" class="btn-add-music">
+            <img src="/src/assets/list.svg" alt="New Playlist">
+            <span>New Playlist</span>
+          </button>
+        </div>
+
+        <div x-show="showNewPlaylist" class="new-playlist-form">
+          <input type="text" 
+                 placeholder="Playlist name..." 
+                 x-model="newPlaylistName"
+                 @keyup.enter="createPlaylist(); showNewPlaylist = false"
+                 class="playlist-input">
+          <div class="form-buttons">
+            <button @click="createPlaylist(); showNewPlaylist = false" class="btn-create">Create</button>
+            <button @click="showNewPlaylist = false; newPlaylistName = ''" class="btn-cancel">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Playlists List -->
+        <div class="playlist-list">
+          <template x-for="playlist in playlists" :key="playlist.id">
+            <div class="playlist-item" 
+                 @click="switchPlaylist(playlist.id); activeTab = 'songs'"
+                 :class="{ 'active': currentPlaylist === playlist.id }">
+              <img src="/src/assets/folder-open.svg" alt="Playlist">
+              <div class="playlist-info">
+                <div class="playlist-title" x-text="playlist.name"></div>
+              </div>
+              <button x-show="playlist.id !== 1" 
+                      @click.stop="deletePlaylist(playlist.id)"
+                      class="btn-delete-playlist">
+                <img src="/src/assets/square-x.svg" alt="Delete">
+              </button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <div class="now-playing">
+        <!-- <div class="album-art">
+          <img src="/src/assets/music.svg" alt="Album Art">
+        </div>
+        <div class="track-info">
+          <h2>Moonlight Serenade</h2>
+          <p>Luna Eclipse</p>
+        </div> -->
+      </div>
+
+      <div class="visualizer">
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+        <div class="visualizer-bar"></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Player Controls Footer -->
+  <footer class="player-controls">
+    <div class="player-left">
+      <div class="controls">
+        <button class="control-btn">
+          <img src="/src/assets/shuffle.svg" alt="Shuffle">
+        </button>
+        <button class="control-btn">
+          <img src="/src/assets/skip-back.svg" alt="Previous">
+        </button>
+        <button class="control-btn play-btn">
+          <img src="/src/assets/pause.svg" alt="Pause">
+        </button>
+        <button class="control-btn">
+          <img src="/src/assets/skip-forward.svg" alt="Next">
+        </button>
+        <button class="control-btn">
+          <img src="/src/assets/repeat.svg" alt="Repeat">
+        </button>
+      </div>
+    </div>
+
+    <div class="player-center">
+      <div class="progress-container">
+        <span class="time-current">1:23</span>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: 35%;"></div>
+        </div>
+        <span class="time-total">3:58</span>
+      </div>
+    </div>
+
+    <div class="player-right" x-data="volumeControl">
+      <div class="volume-control">
+        <button class="control-btn volume-btn">
+          <img src="/src/assets/volume-2.svg" alt="Volume">
+        </button>
+        <input type="range" min="0" max="100" :value="volume" @input="updateVolume"
+          :style="`--volume-percent: ${volume}%`" class="volume-slider">
+      </div>
+      <button class="control-btn" @click="sidebarVisible = !sidebarVisible">
+        <img src="/src/assets/layout-list.svg" alt="Toggle Sidebar">
+      </button>
+      <button class="control-btn settings-btn" @click="document.getElementById('settings-dialog').showModal(); settingsOpen = true">
+        <img src="/src/assets/settings.svg" alt="Settings">
+      </button>
+    </div>
+  </footer>
+
+  <!-- Settings Dialog -->
+  <dialog id="settings-dialog" 
+          x-ref="settingsDialog"
+          @click.self="$refs.settingsDialog.close(); settingsOpen = false"
+          class="settings-dialog"
+          x-data="{ activeSettingsTab: 'general' }">
+    <div class="dialog-content">
+      <div class="dialog-header">
+        <h2>Settings</h2>
+        <button class="dialog-close" @click="$refs.settingsDialog.close(); settingsOpen = false">
+          <img src="/src/assets/square-x.svg" alt="Close">
+        </button>
+      </div>
+      
+      <div class="dialog-body">
+        <!-- Settings Navigation Panel -->
+        <div class="settings-nav">
+          <button @click="activeSettingsTab = 'general'" 
+                  :class="{ 'active': activeSettingsTab === 'general' }" 
+                  class="settings-nav-btn">
+            <img src="/src/assets/settings.svg" alt="General">
+            <span>General</span>
+          </button>
+          <button @click="activeSettingsTab = 'themes'" 
+                  :class="{ 'active': activeSettingsTab === 'themes' }" 
+                  class="settings-nav-btn">
+            <img src="/src/assets/palette.svg" alt="Themes">
+            <span>Themes</span>
+          </button>
+          <button @click="activeSettingsTab = 'others'" 
+                  :class="{ 'active': activeSettingsTab === 'others' }" 
+                  class="settings-nav-btn">
+            <img src="/src/assets/sliders.svg" alt="Others">
+            <span>Others</span>
+          </button>
+        </div>
+
+        <!-- Settings Content Panel -->
+        <div class="settings-content">
+          <!-- General Tab -->
+          <div x-show="activeSettingsTab === 'general'" class="settings-panel">
+            <div class="settings-section">
+              <h3>Audio</h3>
+              <div class="setting-item">
+                <label>Master Volume</label>
+                <div class="setting-control" x-data="volumeControl">
+                  <input type="range" min="0" max="100" :value="volume" @input="updateVolume" class="settings-slider">
+                  <span class="setting-value" x-text="volume + '%'"/>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Music Library</h3>
+              <div class="setting-item">
+                <label>Music Folder</label>
+                <div class="setting-control" style="flex-direction:column;align-items:flex-start;gap:8px;">
+                  <button @click="changeMusicFolder()" :disabled="isScanning" class="btn-add-music" style="width:auto;min-width:160px;">
+                    <img src="/src/assets/folder-open.svg" alt="Change Folder">
+                    <span x-text="isScanning ? 'Scanning...' : 'Change Music Folder'"></span>
+                  </button>
+                  <template x-if="isScanning">
+                    <div class="progress-bar-import">
+                      <div class="progress-bar-track">
+                        <div class="progress-bar-fill" :style="`width: ${scanTotal > 0 ? (scanProgress / scanTotal * 100) : 0}%`"></div>
+                      </div>
+                      <div class="progress-bar-label" x-text="scanTotal > 0 ? `Scanning ${scanProgress} / ${scanTotal}` : 'Scanning...'"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-section">
+              <h3>Playback</h3>
+              <div class="setting-item">
+                <label>Crossfade</label>
+                <div class="setting-control">
+                  <input type="checkbox" class="settings-checkbox">
+                </div>
+              </div>
+              <div class="setting-item">
+                <label>Gapless Playback</label>
+                <div class="setting-control">
+                  <input type="checkbox" class="settings-checkbox" checked>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Themes Tab -->
+          <div x-show="activeSettingsTab === 'themes'" class="settings-panel">
+            <div class="settings-section">
+              <h3>Appearance</h3>
+              <div class="setting-item">
+                <label>Theme</label>
+                <div class="setting-control">
+                  <select class="settings-select">
+                    <option>Dark</option>
+                    <option>Light</option>
+                    <option>Auto</option>
+                  </select>
+                </div>
+              </div>
+              <div class="setting-item">
+                <label>Accent Color</label>
+                <div class="setting-control">
+                  <input type="color" value="#6366f1" class="settings-color">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Others Tab -->
+          <div x-show="activeSettingsTab === 'others'" class="settings-panel">
+            <div class="settings-section">
+              <h3>Advanced</h3>
+              <div class="setting-item">
+                <label>Hardware Acceleration</label>
+                <div class="setting-control">
+                  <input type="checkbox" class="settings-checkbox" checked>
+                </div>
+              </div>
+              <div class="setting-item">
+                <label>Show Visualizer</label>
+                <div class="setting-control">
+                  <input type="checkbox" class="settings-checkbox" checked>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dialog-footer">
+        <button class="btn-secondary" @click="$refs.settingsDialog.close(); settingsOpen = false">Cancel</button>
+        <button class="btn-primary" @click="$refs.settingsDialog.close(); settingsOpen = false">Save</button>
+      </div>
+    </div>
+  </dialog>
+</body>
+
+</html>

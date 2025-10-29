@@ -1,0 +1,68 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Vite
+.vite/
+
+# Tauri build
+/src-tauri/target/
+/src-tauri/.cargo/
+/src-tauri/CACHEDIR.TAG
+/src-tauri/astrotune.exe
+/src-tauri/astrotune*
+/src-tauri/*.dmp
+/src-tauri/*.pdb
+/src-tauri/*.dll
+/src-tauri/*.so
+/src-tauri/*.dylib
+/src-tauri/*.app
+/src-tauri/*.log
+/src-tauri/*.lock
+/src-tauri/*.old
+/src-tauri/*.bak
+/src-tauri/*.tmp
+/src-tauri/*.db
+/src-tauri/astrotune_lib.*
+
+# Rust
+Cargo.lock
+*.rs.bk
+
+# SQLite DB
+astrotune.db
+/src-tauri/astrotune.db
+
+# Misc
+.env
+.env.*
+.settings.json
+.settings/
+
+# Coverage
+coverage/
+*.lcov
+
+# Jupyter
+*.ipynb_checkpoints/
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
