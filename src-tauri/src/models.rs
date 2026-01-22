@@ -13,6 +13,7 @@ pub struct SongRow {
     pub genre: Option<String>,
     pub duration: Option<f64>,
     pub track_number: Option<i32>,
+    pub cover_art_path: Option<String>,
     pub file_modified_time: i64,
     pub scan_status: String,
 }
@@ -87,6 +88,7 @@ pub struct AudioMetadata {
     pub genre: Option<String>,
     pub duration: Option<f64>,
     pub track_number: Option<i32>,
+    pub cover_art_path: Option<String>,
 }
 
 /// Song data ready for database insertion
@@ -100,6 +102,7 @@ pub struct SongInsert {
     pub genre: Option<String>,
     pub duration: Option<f64>,
     pub track_number: Option<i32>,
+    pub cover_art_path: Option<String>,
     pub file_modified_time: i64,
     pub scan_status: String,
 }

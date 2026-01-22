@@ -108,6 +108,11 @@ interface MusicPlayerState {
   // Modal State
   showCreatePlaylist: boolean;
   newPlaylistName: string;
+  newPlaylistCover: string | null;
+  newPlaylistCoverLoading: boolean;
+  newPlaylistSongIds: number[];
+  availableSongsForPlaylist: LibrarySong[];
+  playlistSongSearch: string;
   showRenamePlaylist: boolean;
   renamePlaylistId: number | null;
   renamePlaylistName: string;
@@ -132,6 +137,11 @@ interface MusicPlayerState {
   
   // Playlist Methods
   createPlaylist: () => Promise<void>;
+  openCreatePlaylistModal: () => Promise<void>;
+  selectPlaylistCover: () => Promise<void>;
+  getNewPlaylistCoverUrl: () => string | null;
+  toggleSongForPlaylist: (songId: number) => void;
+  filterPlaylistSongs: () => LibrarySong[];
   renamePlaylist: () => Promise<void>;
   deletePlaylist: (id: number) => Promise<void>;
   openRenameModal: (playlist: Playlist) => void;
@@ -156,7 +166,12 @@ interface MusicPlayerState {
   formatDuration: (seconds: number | null) => string;
   getDisplayTitle: (song: LibrarySong) => string;
   getDisplayArtist: (song: LibrarySong) => string;
+  getCoverArtUrl: (song: LibrarySong) => string | null;
   icon: (name: keyof typeof icons, size?: number) => string;
+  getPlaylistCoverUrl: (playlist: Playlist) => string | null;
+
+  // Image Utilities
+  resizeImageToDataUrl: (filePath: string, maxSize: number) => Promise<string>;
 }
 
 // Register the Alpine component before starting
@@ -199,6 +214,11 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     // Modal State
     showCreatePlaylist: false,
     newPlaylistName: '',
+    newPlaylistCover: null,
+    newPlaylistCoverLoading: false,
+    newPlaylistSongIds: [],
+    availableSongsForPlaylist: [],
+    playlistSongSearch: '',
     showRenamePlaylist: false,
     renamePlaylistId: null,
     renamePlaylistName: '',
@@ -350,12 +370,101 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
       }
     },
 
+    async openCreatePlaylistModal() {
+      // Reset modal state
+      this.newPlaylistName = '';
+      this.newPlaylistCover = null;
+      this.newPlaylistSongIds = [];
+      this.playlistSongSearch = '';
+      
+      // Load all songs for selection
+      try {
+        const result = await tauri.querySongs(null, 1000, 0);
+        this.availableSongsForPlaylist = result.songs;
+      } catch (error) {
+        console.error('Failed to load songs for playlist:', error);
+        this.availableSongsForPlaylist = [];
+      }
+      
+      this.showCreatePlaylist = true;
+    },
+
+    async selectPlaylistCover() {
+      // Only show loader if a file is actually being processed
+      const selected = await tauri.openImageDialog();
+      if (selected) {
+        try {
+          this.newPlaylistCoverLoading = true;
+          // Save resized image to covers dir via backend (no browser resize)
+          const coverPath = await tauri.saveResizedCoverImageFromPath(selected, 256);
+          this.newPlaylistCover = coverPath;
+        } catch (error) {
+          console.error('Failed to select cover image:', error);
+        } finally {
+          this.newPlaylistCoverLoading = false;
+        }
+      }
+    },
+
+    async resizeImageToDataUrl(filePath: string, maxSize: number): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function () {
+          const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+          const w = Math.round(img.width * scale);
+          const h = Math.round(img.height * scale);
+          const canvas = document.createElement('canvas');
+          canvas.width = w;
+          canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return reject('No canvas context');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        };
+        img.onerror = reject;
+        img.src = tauri.convertFileSrc(filePath);
+      });
+    },
+
+    getNewPlaylistCoverUrl(): string | null {
+      if (!this.newPlaylistCover) return null;
+      return tauri.convertFileSrc(this.newPlaylistCover);
+    },
+
+    toggleSongForPlaylist(songId: number) {
+      const index = this.newPlaylistSongIds.indexOf(songId);
+      if (index === -1) {
+        this.newPlaylistSongIds.push(songId);
+      } else {
+        this.newPlaylistSongIds.splice(index, 1);
+      }
+    },
+
+    filterPlaylistSongs(): LibrarySong[] {
+      if (!this.playlistSongSearch.trim()) {
+        return this.availableSongsForPlaylist;
+      }
+      const search = this.playlistSongSearch.toLowerCase();
+      return this.availableSongsForPlaylist.filter(song => 
+        (song.title?.toLowerCase().includes(search)) ||
+        (song.artist?.toLowerCase().includes(search)) ||
+        (song.album?.toLowerCase().includes(search))
+      );
+    },
+
     async createPlaylist() {
       if (!this.newPlaylistName.trim()) return;
       
       try {
-        await tauri.createPlaylist(this.newPlaylistName.trim());
+        await tauri.createPlaylist(
+          this.newPlaylistName.trim(),
+          this.newPlaylistCover,
+          this.newPlaylistSongIds
+        );
         this.newPlaylistName = '';
+        this.newPlaylistCover = null;
+        this.newPlaylistSongIds = [];
+        this.availableSongsForPlaylist = [];
         this.showCreatePlaylist = false;
         await this.loadPlaylists();
       } catch (error) {
@@ -403,7 +512,7 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
         id: song.id,
         title: this.getDisplayTitle(song),
         artist: this.getDisplayArtist(song),
-        albumArt: '', // Could extract from file later
+        albumArt: this.getCoverArtUrl(song) || '',
         duration: song.duration || 0,
         isFavorite: false,
         filePath: song.file_path,
@@ -513,6 +622,15 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
 
     getDisplayArtist(song: LibrarySong): string {
       return song.artist || 'Unknown Artist';
+    },
+
+    getCoverArtUrl(song: LibrarySong): string | null {
+      return tauri.getCoverArtUrl(song);
+    },
+
+    getPlaylistCoverUrl(playlist: Playlist): string | null {
+      if (!playlist.cover_image_path) return null;
+      return tauri.convertFileSrc(playlist.cover_image_path);
     },
 
     icon(name: keyof typeof icons, size = 20): string {

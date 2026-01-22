@@ -37,7 +37,7 @@
 
 	<!-- Create Playlist Modal -->
 	<div class="modal-overlay" x-show="showCreatePlaylist" x-cloak @click.self="showCreatePlaylist = false">
-		<div class="modal">
+		<div class="modal modal-lg">
 			<div class="modal-header">
 				<h3>Create Playlist</h3>
 				<button class="icon-btn" @click="showCreatePlaylist = false">
@@ -45,17 +45,79 @@
 				</button>
 			</div>
 			<div class="modal-body">
-				<input 
-					type="text" 
-					class="modal-input" 
-					placeholder="Playlist name" 
-					x-model="newPlaylistName"
-					@keyup.enter="createPlaylist()"
-				/>
+				<div class="playlist-form">
+					<!-- Cover and Name Section -->
+					<div class="playlist-form-header">
+						<div class="playlist-cover-picker" @click="selectPlaylistCover()">
+							<template x-if="newPlaylistCoverLoading">
+								<div class="cover-preview cover-loading" x-html="icon('loader', 40)"></div>
+							</template>
+							<template x-if="!newPlaylistCoverLoading && newPlaylistCover">
+								<img :src="getNewPlaylistCoverUrl()" alt="Cover" class="cover-preview" />
+							</template>
+							<template x-if="!newPlaylistCoverLoading && !newPlaylistCover">
+								<div class="cover-placeholder">
+									<span x-html="icon('listMusic', 32)"></span>
+									<span class="cover-hint">Add Cover</span>
+								</div>
+							</template>
+						</div>
+						<div class="playlist-form-name">
+							<input 
+								type="text" 
+								class="modal-input" 
+								placeholder="Playlist name" 
+								x-model="newPlaylistName"
+							/>
+						</div>
+					</div>
+
+					<!-- Song Selection Section -->
+					<div class="playlist-song-selector">
+						<div class="song-selector-header">
+							<span class="song-selector-title">Add Songs</span>
+							<span class="song-selector-count" x-text="newPlaylistSongIds.length + ' selected'"></span>
+						</div>
+						<input 
+							type="text" 
+							class="modal-input song-search" 
+							placeholder="Search songs..." 
+							x-model="playlistSongSearch"
+						/>
+						<div class="song-selector-list">
+							<template x-for="song in filterPlaylistSongs()" :key="song.id">
+								<label class="song-selector-item" :class="{ 'selected': newPlaylistSongIds.includes(song.id) }">
+									<input 
+										type="checkbox" 
+										:checked="newPlaylistSongIds.includes(song.id)"
+										@change="toggleSongForPlaylist(song.id)"
+									/>
+									<div class="song-selector-cover">
+										<img 
+											x-show="getCoverArtUrl(song)" 
+											:src="getCoverArtUrl(song)" 
+											alt="Cover" 
+											class="cover-thumb"
+										/>
+										<span x-show="!getCoverArtUrl(song)" x-html="icon('music2', 16)"></span>
+									</div>
+									<div class="song-selector-info">
+										<span class="song-selector-title" x-text="getDisplayTitle(song)"></span>
+										<span class="song-selector-artist" x-text="getDisplayArtist(song)"></span>
+									</div>
+									<span class="song-selector-duration" x-text="formatDuration(song.duration)"></span>
+								</label>
+							</template>
+							<div x-show="filterPlaylistSongs().length === 0" class="song-selector-empty">
+								<span x-text="availableSongsForPlaylist.length === 0 ? 'No songs in library' : 'No songs match your search'"></span>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 			<div class="modal-footer">
 				<button class="btn btn-secondary" @click="showCreatePlaylist = false">Cancel</button>
-				<button class="btn btn-primary" @click="createPlaylist()">Create</button>
+				<button class="btn btn-primary" @click="createPlaylist()" :disabled="!newPlaylistName.trim()">Create</button>
 			</div>
 		</div>
 	</div>
@@ -97,13 +159,6 @@
 			<div class="settings-body">
 				<div class="settings-section">
 					<h4>Library</h4>
-					<div class="settings-item-info" x-show="libraryPath">
-						<span x-html="icon('folder', 20)"></span>
-						<div class="settings-item-text">
-							<span class="settings-item-title">Current Folder</span>
-							<span class="settings-item-path" x-text="libraryPath"></span>
-						</div>
-					</div>
 					<div class="settings-item" @click="scanFolder(); $refs.settingsDialog.close()">
 						<span x-html="icon('folder', 20)"></span>
 						<div class="settings-item-text">
@@ -122,9 +177,14 @@
 				<div class="settings-section">
 					<h4>About</h4>
 					<div class="settings-info">
+						<span>Current Folder</span>
+						<span class="settings-item-path" x-text="libraryPath"></span>
+					</div>
+					<div class="settings-info">
 						<span>Astrotune</span>
 						<span class="settings-version">v0.1.0</span>
 					</div>
+					
 				</div>
 			</div>
 		</div>
@@ -174,7 +234,7 @@
 						<!-- All Songs (always first) -->
 						<a href="#" class="playlist-item" :class="{ 'active': currentPlaylistId === null }" @click.prevent="selectPlaylist(null)">
 							<div class="playlist-icon">
-								<span x-html="icon('music2', 20)"></span>
+								<span x-html="icon('listMusic', 20)"></span>
 							</div>
 							<div class="playlist-info">
 								<span class="playlist-name">All Songs</span>
@@ -185,7 +245,8 @@
 						<template x-for="playlist in playlists.filter(p => !p.is_system)" :key="playlist.id">
 							<a href="#" class="playlist-item" :class="{ 'active': currentPlaylistId === playlist.id }" @click.prevent="selectPlaylist(playlist.id)">
 								<div class="playlist-icon">
-									<span x-html="icon('listMusic', 20)"></span>
+									<img x-show="getPlaylistCoverUrl(playlist)" :src="getPlaylistCoverUrl(playlist)" alt="Cover" class="cover-thumb" />
+									<span x-show="!getPlaylistCoverUrl(playlist)" x-html="icon('listMusic', 20)"></span>
 								</div>
 								<div class="playlist-info">
 									<span class="playlist-name" x-text="playlist.name"></span>
@@ -213,8 +274,14 @@
 						
 						<template x-for="song in librarySongs" :key="song.id">
 							<a href="#" class="playlist-item" @click.prevent="playSong(song)">
-								<div class="playlist-icon">
-									<span x-html="icon('music2', 20)"></span>
+								<div class="playlist-icon song-cover">
+									<img 
+										x-show="getCoverArtUrl(song)" 
+										:src="getCoverArtUrl(song)" 
+										alt="Cover" 
+										class="cover-thumb"
+									/>
+									<span x-show="!getCoverArtUrl(song)" x-html="icon('music2', 20)"></span>
 								</div>
 								<div class="playlist-info">
 									<span class="playlist-name" x-text="getDisplayTitle(song)"></span>
@@ -237,7 +304,7 @@
 			</div>
 
 			<div class="sidebar-footer" x-show="libraryPath">
-				<button class="create-playlist-btn" @click="showCreatePlaylist = true">
+				<button class="create-playlist-btn" @click="openCreatePlaylistModal()">
 					<span x-html="icon('plus', 20)"></span>
 					<span>Create Playlist</span>
 				</button>
@@ -250,10 +317,14 @@
 			<div class="player-container">
 				<div class="album-art-wrapper">
 					<img 
+						x-show="currentTrack.albumArt"
 						class="album-art" 
 						:src="currentTrack.albumArt" 
 						:alt="currentTrack.title + ' album art'" 
 					/>
+					<div x-show="!currentTrack.albumArt" class="album-art-placeholder">
+						<span x-html="icon('music2', 80)"></span>
+					</div>
 				</div>
 
 				<div class="track-info">
@@ -267,7 +338,9 @@
 	<!-- Footer Controls -->
 	<footer class="footer-controls">
 		<div class="footer-left">
-			<div class="mini-album-art" :style="{ backgroundImage: 'url(' + currentTrack.albumArt + ')' }"></div>
+			<div class="mini-album-art" :class="{ 'has-art': currentTrack.albumArt }" :style="currentTrack.albumArt ? { backgroundImage: 'url(' + currentTrack.albumArt + ')' } : {}">
+				<span x-show="!currentTrack.albumArt" x-html="icon('music2', 24)"></span>
+			</div>
 			<div class="mini-track-info">
 				<a href="#" class="mini-track-title" x-text="currentTrack.title"></a>
 				<a href="#" class="mini-track-artist" x-text="currentTrack.artist"></a>

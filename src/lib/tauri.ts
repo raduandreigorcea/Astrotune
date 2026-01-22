@@ -4,6 +4,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { convertFileSrc } from '@tauri-apps/api/core';
 
 // ============================================================================
 // Types
@@ -19,6 +20,7 @@ export interface Song {
   genre: string | null;
   duration: number | null;
   track_number: number | null;
+  cover_art_path: string | null;
   file_modified_time: number;
   scan_status: string;
 }
@@ -121,10 +123,21 @@ export async function querySongs(
 }
 
 /**
- * Create a new playlist
+ * Create a new playlist with optional cover and songs
  */
-export async function createPlaylist(name: string, cover?: string): Promise<number> {
-  return invoke<number>('create_playlist', { name, cover });
+export async function createPlaylist(
+  name: string, 
+  cover?: string | null,
+  songIds?: number[]
+): Promise<number> {
+  const playlistId = await invoke<number>('create_playlist', { name, cover });
+  
+  // Add songs if provided
+  if (songIds && songIds.length > 0) {
+    await addSongsToPlaylist(playlistId, songIds);
+  }
+  
+  return playlistId;
 }
 
 /**
@@ -229,9 +242,51 @@ export async function openFolderDialog(): Promise<string | null> {
   }
 }
 
+/**
+ * Open image picker dialog for playlist cover
+ */
+export async function openImageDialog(): Promise<string | null> {
+  try {
+    // @ts-ignore - plugin types may not be available
+    const dialog = await import('@tauri-apps/plugin-dialog');
+    const selected = await dialog.open({
+      directory: false,
+      multiple: false,
+      title: 'Select Cover Image',
+      filters: [{
+        name: 'Images',
+        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp']
+      }]
+    });
+    return selected as string | null;
+  } catch (e) {
+    console.error('Dialog plugin error:', e);
+    return null;
+  }
+}
+
+/**
+ * Save a resized cover image (base64) to the covers directory
+ */
+export async function saveResizedCoverImage(base64: string, maxSize = 256): Promise<string> {
+  return invoke<string>('save_resized_cover_image', { base64Data: base64, maxSize });
+}
+
+/**
+ * Save a resized cover image from a file path to the covers directory
+ */
+export async function saveResizedCoverImageFromPath(imagePath: string, maxSize = 256): Promise<string> {
+  return invoke<string>('save_resized_cover_image_from_path', { imagePath, maxSize });
+}
+
 // ============================================================================
 // Utility functions
 // ============================================================================
+
+/**
+ * Convert a local file path to a URL that can be loaded in the webview
+ */
+export { convertFileSrc };
 
 /**
  * Format duration in seconds to mm:ss
@@ -260,4 +315,13 @@ export function getDisplayTitle(song: Song): string {
  */
 export function getDisplayArtist(song: Song): string {
   return song.artist || 'Unknown Artist';
+}
+
+/**
+ * Get cover art URL for a song
+ * Converts the local file path to a Tauri asset URL
+ */
+export function getCoverArtUrl(song: Song): string | null {
+  if (!song.cover_art_path) return null;
+  return convertFileSrc(song.cover_art_path);
 }

@@ -18,10 +18,13 @@ const BATCH_SIZE: usize = 300;
 const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "wav", "ogg", "opus", "aac", "wma"];
 
 /// Main scanning function with progress callbacks
-pub fn scan<F>(request: ScanRequest, db_path: &Path, mut on_progress: F) -> AppResult<()>
+pub fn scan<F>(request: ScanRequest, db_path: &Path, covers_path: &Path, mut on_progress: F) -> AppResult<()>
 where
     F: FnMut(ScanProgress),
 {
+    // Ensure covers directory exists
+    fs::create_dir_all(covers_path)?;
+    
     let conn = db::open_db(db_path)?;
     let mut errors: Vec<ScanError> = Vec::new();
 
@@ -122,7 +125,7 @@ where
                 errors: errors.clone(),
             });
 
-            match extract_metadata(&file_info.path) {
+            match extract_metadata(&file_info.path, covers_path) {
                 Ok(metadata) => {
                     batch_songs.push(SongInsert {
                         file_path: path_str,
@@ -133,6 +136,7 @@ where
                         genre: metadata.genre,
                         duration: metadata.duration,
                         track_number: metadata.track_number,
+                        cover_art_path: metadata.cover_art_path,
                         file_modified_time: file_info.modified_time,
                         scan_status: "ok".to_string(),
                     });
@@ -152,6 +156,7 @@ where
                         genre: None,
                         duration: None,
                         track_number: None,
+                        cover_art_path: None,
                         file_modified_time: file_info.modified_time,
                         scan_status: "error".to_string(),
                     });
@@ -242,7 +247,7 @@ fn discover_audio_files(root: &Path) -> AppResult<Vec<FileInfo>> {
 }
 
 /// Extract metadata from an audio file using lofty
-fn extract_metadata(path: &Path) -> AppResult<AudioMetadata> {
+fn extract_metadata(path: &Path, covers_path: &Path) -> AppResult<AudioMetadata> {
     let tagged_file = Probe::open(path)
         .map_err(|e| AppError::Metadata(format!("Failed to open file: {}", e)))?
         .read()
@@ -264,6 +269,43 @@ fn extract_metadata(path: &Path) -> AppResult<AudioMetadata> {
         metadata.year = tag.year().map(|y| y as i32);
         metadata.genre = tag.genre().map(|s| s.to_string());
         metadata.track_number = tag.track().map(|t| t as i32);
+        
+        // Extract cover art
+        if let Some(picture) = tag.pictures().first() {
+            // Generate a unique filename based on the audio file path
+            let hash = {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                path.hash(&mut hasher);
+                hasher.finish()
+            };
+            
+            // Determine file extension from mime type
+            let ext = match picture.mime_type() {
+                lofty::MimeType::Png => "png",
+                lofty::MimeType::Jpeg => "jpg",
+                lofty::MimeType::Bmp => "bmp",
+                lofty::MimeType::Gif => "gif",
+                lofty::MimeType::Tiff => "tiff",
+                _ => "jpg", // Default to jpg
+            };
+            
+            let cover_filename = format!("{:016x}.{}", hash, ext);
+            let cover_path = covers_path.join(&cover_filename);
+            
+            // Only write if doesn't exist
+            if !cover_path.exists() {
+                if let Err(e) = fs::write(&cover_path, picture.data()) {
+                    // Log but don't fail - cover art is optional
+                    eprintln!("Failed to save cover art: {}", e);
+                } else {
+                    metadata.cover_art_path = Some(cover_path.to_string_lossy().to_string());
+                }
+            } else {
+                metadata.cover_art_path = Some(cover_path.to_string_lossy().to_string());
+            }
+        }
     }
 
     // If no title found, use filename
@@ -278,7 +320,7 @@ fn extract_metadata(path: &Path) -> AppResult<AudioMetadata> {
 }
 
 /// Retry scanning failed files
-pub fn retry_failed_files<F>(db_path: &Path, mut on_progress: F) -> AppResult<()>
+pub fn retry_failed_files<F>(db_path: &Path, covers_path: &Path, mut on_progress: F) -> AppResult<()>
 where
     F: FnMut(ScanProgress),
 {
@@ -324,14 +366,14 @@ where
             errors: errors.clone(),
         });
 
-        match extract_metadata(&path) {
+        match extract_metadata(&path, covers_path) {
             Ok(metadata) => {
                 // Update the song with new metadata
                 conn.execute(
                     "UPDATE songs SET 
                      title = ?1, artist = ?2, album = ?3, year = ?4, 
-                     genre = ?5, duration = ?6, track_number = ?7, scan_status = 'ok'
-                     WHERE id = ?8",
+                     genre = ?5, duration = ?6, track_number = ?7, cover_art_path = ?8, scan_status = 'ok'
+                     WHERE id = ?9",
                     rusqlite::params![
                         metadata.title,
                         metadata.artist,
@@ -340,6 +382,7 @@ where
                         metadata.genre,
                         metadata.duration,
                         metadata.track_number,
+                        metadata.cover_art_path,
                         id
                     ],
                 )?;

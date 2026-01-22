@@ -41,6 +41,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
             genre TEXT,
             duration REAL,
             track_number INTEGER,
+            cover_art_path TEXT,
             file_modified_time INTEGER NOT NULL,
             scan_status TEXT NOT NULL DEFAULT 'ok',
             created_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -83,6 +84,20 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         END;
         "
     )?;
+
+    // Migration: Add cover_art_path column if it doesn't exist (for databases created before this feature)
+    let has_cover_art_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('songs') WHERE name = 'cover_art_path'",
+            [],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_cover_art_column {
+        conn.execute("ALTER TABLE songs ADD COLUMN cover_art_path TEXT", [])?;
+    }
 
     // Create the system 'All Songs' playlist if it doesn't exist
     let exists: bool = conn
@@ -146,8 +161,8 @@ pub fn drop_indexes(conn: &Connection) -> AppResult<()> {
 pub fn insert_songs_batch(conn: &Connection, songs: &[SongInsert]) -> AppResult<Vec<i64>> {
     let mut stmt = conn.prepare_cached(
         "INSERT OR REPLACE INTO songs 
-         (file_path, title, artist, album, year, genre, duration, track_number, file_modified_time, scan_status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         (file_path, title, artist, album, year, genre, duration, track_number, cover_art_path, file_modified_time, scan_status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          RETURNING id"
     )?;
 
@@ -163,6 +178,7 @@ pub fn insert_songs_batch(conn: &Connection, songs: &[SongInsert]) -> AppResult<
                 song.genre,
                 song.duration,
                 song.track_number,
+                song.cover_art_path,
                 song.file_modified_time,
                 song.scan_status,
             ],
@@ -203,7 +219,7 @@ pub fn get_existing_songs(conn: &Connection, paths: &[String]) -> AppResult<Vec<
 /// Query all songs with pagination
 pub fn query_all_songs(conn: &Connection, limit: i64, offset: i64) -> AppResult<Vec<SongRow>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, file_path, title, artist, album, year, genre, duration, track_number, file_modified_time, scan_status
+        "SELECT id, file_path, title, artist, album, year, genre, duration, track_number, cover_art_path, file_modified_time, scan_status
          FROM songs
          ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, track_number, title COLLATE NOCASE
          LIMIT ?1 OFFSET ?2"
@@ -220,8 +236,9 @@ pub fn query_all_songs(conn: &Connection, limit: i64, offset: i64) -> AppResult<
             genre: row.get(6)?,
             duration: row.get(7)?,
             track_number: row.get(8)?,
-            file_modified_time: row.get(9)?,
-            scan_status: row.get(10)?,
+            cover_art_path: row.get(9)?,
+            file_modified_time: row.get(10)?,
+            scan_status: row.get(11)?,
         })
     })?;
 
@@ -269,13 +286,18 @@ pub fn clear_library(conn: &Connection) -> AppResult<()> {
 // ============================================================================
 
 /// List all playlists
-pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, bool)>> {
+pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, Option<String>, bool)>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, name, is_system FROM playlists ORDER BY is_system DESC, name COLLATE NOCASE"
+        "SELECT id, name, cover_image_path, is_system FROM playlists ORDER BY is_system DESC, name COLLATE NOCASE"
     )?;
 
     let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, bool>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+            row.get::<_, bool>(3)?
+        ))
     })?;
 
     let mut playlists = Vec::new();
@@ -361,7 +383,7 @@ pub fn get_all_songs_playlist_id(conn: &Connection) -> AppResult<i64> {
 /// Query songs from a specific playlist with pagination
 pub fn query_playlist_songs(conn: &Connection, playlist_id: i64, limit: i64, offset: i64) -> AppResult<Vec<SongRow>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT s.id, s.file_path, s.title, s.artist, s.album, s.year, s.genre, s.duration, s.track_number, s.file_modified_time, s.scan_status
+        "SELECT s.id, s.file_path, s.title, s.artist, s.album, s.year, s.genre, s.duration, s.track_number, s.cover_art_path, s.file_modified_time, s.scan_status
          FROM songs s
          INNER JOIN playlist_songs ps ON s.id = ps.song_id
          WHERE ps.playlist_id = ?1
@@ -380,8 +402,9 @@ pub fn query_playlist_songs(conn: &Connection, playlist_id: i64, limit: i64, off
             genre: row.get(6)?,
             duration: row.get(7)?,
             track_number: row.get(8)?,
-            file_modified_time: row.get(9)?,
-            scan_status: row.get(10)?,
+            cover_art_path: row.get(9)?,
+            file_modified_time: row.get(10)?,
+            scan_status: row.get(11)?,
         })
     })?;
 

@@ -1,3 +1,36 @@
+mod image_utils;
+#[tauri::command]
+async fn save_resized_cover_image(
+    covers_state: State<'_, CoversPath>,
+    base64_data: String,
+    max_size: Option<u32>
+) -> AppResult<String> {
+    let covers_dir = covers_state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        image_utils::save_resized_cover(&base64_data, &covers_dir, max_size.unwrap_or(256))
+    })
+    .await
+    .unwrap()
+}
+
+#[tauri::command]
+async fn save_resized_cover_image_from_path(
+    covers_state: State<'_, CoversPath>,
+    image_path: String,
+    max_size: Option<u32>
+) -> AppResult<String> {
+    let covers_dir = covers_state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        image_utils::save_resized_cover_from_path(
+            std::path::Path::new(&image_path),
+            &covers_dir,
+            max_size.unwrap_or(256),
+        )
+    })
+    .await
+    .unwrap()
+}
+
 mod config;
 mod db;
 mod error;
@@ -16,6 +49,7 @@ pub type AppResult<T> = Result<T, AppError>;
 
 struct DbPath(PathBuf);
 struct ConfigPath(PathBuf);
+struct CoversPath(PathBuf);
 
 #[tauri::command]
 async fn init_database(state: State<'_, DbPath>) -> AppResult<()> {
@@ -80,12 +114,12 @@ async fn list_playlists(state: State<'_, DbPath>) -> AppResult<Vec<PlaylistRow>>
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_db(&path)?;
         let mut rows = Vec::new();
-        for (id, name, is_system) in db::list_playlists(&conn)? {
+        for (id, name, cover_image_path, is_system) in db::list_playlists(&conn)? {
             rows.push(PlaylistRow {
                 id,
                 name,
                 is_system,
-                cover_image_path: None,
+                cover_image_path,
             });
         }
         Ok::<_, AppError>(rows)
@@ -216,13 +250,20 @@ async fn reorder_playlist(state: State<'_, DbPath>, payload: PlaylistPositions) 
 }
 
 #[tauri::command]
-async fn scan_folder(app: tauri::AppHandle, state: State<'_, DbPath>, root: String) -> AppResult<()> {
-    let db_path = state.0.clone();
+async fn scan_folder(
+    app: tauri::AppHandle,
+    db_state: State<'_, DbPath>,
+    covers_state: State<'_, CoversPath>,
+    root: String,
+) -> AppResult<()> {
+    let db_path = db_state.0.clone();
+    let covers_path = covers_state.0.clone();
     let root_path = PathBuf::from(root);
     tauri::async_runtime::spawn_blocking(move || {
         scanner::scan(
             ScanRequest { root: root_path },
             &db_path,
+            &covers_path,
             |progress: ScanProgress| {
                 let _ = app.emit("scan-progress", progress);
             },
@@ -233,11 +274,17 @@ async fn scan_folder(app: tauri::AppHandle, state: State<'_, DbPath>, root: Stri
 }
 
 #[tauri::command]
-async fn retry_failed_scans(app: tauri::AppHandle, state: State<'_, DbPath>) -> AppResult<()> {
+async fn retry_failed_scans(
+    app: tauri::AppHandle, 
+    state: State<'_, DbPath>,
+    covers_state: State<'_, CoversPath>
+) -> AppResult<()> {
     let db_path = state.0.clone();
+    let covers_path = covers_state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         scanner::retry_failed_files(
             &db_path,
+            &covers_path,
             |progress: ScanProgress| {
                 let _ = app.emit("scan-progress", progress);
             },
@@ -263,9 +310,15 @@ pub fn run() {
             
             let db_path = app_data_dir.join(DB_PATH);
             let config_path = app_data_dir.join(CONFIG_FILENAME);
+            let covers_path = app_data_dir.join("covers");
+            
+            // Ensure covers directory exists
+            std::fs::create_dir_all(&covers_path)
+                .expect("Failed to create covers directory");
             
             app.manage(DbPath(db_path));
             app.manage(ConfigPath(config_path));
+            app.manage(CoversPath(covers_path));
             
             Ok(())
         })
@@ -287,6 +340,8 @@ pub fn run() {
             reorder_playlist,
             scan_folder,
             retry_failed_scans,
+            save_resized_cover_image,
+            save_resized_cover_image_from_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
