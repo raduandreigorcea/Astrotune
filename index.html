@@ -1,15 +1,326 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="stylesheet" href="/src/styles.css" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Astrotune</title>
-    <script type="module" src="/src/main.ts" defer></script>
-  </head>
+<html lang="en" class="dark">
 
-  <body>
-    <main class="container">
-    </main>
-  </body>
+<head>
+	<meta charset="UTF-8" />
+	<link rel="stylesheet" href="/src/styles.css" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Astrotune</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+	<link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+	<script type="module" src="/src/main.ts"></script>
+</head>
+
+<body x-data="musicPlayer" x-init="init()" @mousemove="handleDrag($event)" @mouseup="stopDrag()">
+	<!-- Scan Progress Modal -->
+	<div class="modal-overlay" x-show="isScanning" x-cloak>
+		<div class="modal">
+			<div class="modal-header">
+				<h3>Scanning Music Library</h3>
+			</div>
+			<div class="modal-body" x-show="scanProgress">
+				<div class="scan-phase" x-text="scanProgress?.phase"></div>
+				<div class="scan-file" x-text="scanProgress?.current_file"></div>
+				<div class="scan-progress-bar">
+					<div class="scan-progress-fill" :style="{ width: (scanProgress?.percentage || 0) + '%' }"></div>
+				</div>
+				<div class="scan-stats">
+					<span x-text="scanProgress?.processed || 0"></span> / <span x-text="scanProgress?.total || 0"></span> files
+				</div>
+				<div class="scan-errors" x-show="scanProgress?.errors?.length > 0">
+					<span x-text="scanProgress?.errors?.length"></span> errors
+				</div>
+			</div>
+		</div>
+	</div>
+
+	<!-- Create Playlist Modal -->
+	<div class="modal-overlay" x-show="showCreatePlaylist" x-cloak @click.self="showCreatePlaylist = false">
+		<div class="modal">
+			<div class="modal-header">
+				<h3>Create Playlist</h3>
+				<button class="icon-btn" @click="showCreatePlaylist = false">
+					<span x-html="icon('x', 20)"></span>
+				</button>
+			</div>
+			<div class="modal-body">
+				<input 
+					type="text" 
+					class="modal-input" 
+					placeholder="Playlist name" 
+					x-model="newPlaylistName"
+					@keyup.enter="createPlaylist()"
+				/>
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-secondary" @click="showCreatePlaylist = false">Cancel</button>
+				<button class="btn btn-primary" @click="createPlaylist()">Create</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Rename Playlist Modal -->
+	<div class="modal-overlay" x-show="showRenamePlaylist" x-cloak @click.self="showRenamePlaylist = false">
+		<div class="modal">
+			<div class="modal-header">
+				<h3>Rename Playlist</h3>
+				<button class="icon-btn" @click="showRenamePlaylist = false">
+					<span x-html="icon('x', 20)"></span>
+				</button>
+			</div>
+			<div class="modal-body">
+				<input 
+					type="text" 
+					class="modal-input" 
+					placeholder="Playlist name" 
+					x-model="renamePlaylistName"
+					@keyup.enter="renamePlaylist()"
+				/>
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-secondary" @click="showRenamePlaylist = false">Cancel</button>
+				<button class="btn btn-primary" @click="renamePlaylist()">Rename</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Settings Dialog -->
+	<dialog x-ref="settingsDialog" class="settings-dialog" @click.self="$refs.settingsDialog.close()">
+		<div class="settings-content">
+			<div class="settings-header">
+				<h3>Settings</h3>
+				<button class="icon-btn" @click="$refs.settingsDialog.close()">
+					<span x-html="icon('x', 20)"></span>
+				</button>
+			</div>
+			<div class="settings-body">
+				<div class="settings-section">
+					<h4>Library</h4>
+					<div class="settings-item-info" x-show="libraryPath">
+						<span x-html="icon('folder', 20)"></span>
+						<div class="settings-item-text">
+							<span class="settings-item-title">Current Folder</span>
+							<span class="settings-item-path" x-text="libraryPath"></span>
+						</div>
+					</div>
+					<div class="settings-item" @click="scanFolder(); $refs.settingsDialog.close()">
+						<span x-html="icon('folder', 20)"></span>
+						<div class="settings-item-text">
+							<span class="settings-item-title" x-text="libraryPath ? 'Change Folder' : 'Scan Folder'"></span>
+							<span class="settings-item-desc" x-text="libraryPath ? 'Replace current library with a new folder' : 'Add music from a folder to your library'"></span>
+						</div>
+					</div>
+					<div class="settings-item settings-item-danger" x-show="libraryPath" @click="resetLibrary(); $refs.settingsDialog.close()">
+						<span x-html="icon('trash', 20)"></span>
+						<div class="settings-item-text">
+							<span class="settings-item-title">Reset Library</span>
+							<span class="settings-item-desc">Remove all songs and playlists</span>
+						</div>
+					</div>
+				</div>
+				<div class="settings-section">
+					<h4>About</h4>
+					<div class="settings-info">
+						<span>Astrotune</span>
+						<span class="settings-version">v0.1.0</span>
+					</div>
+				</div>
+			</div>
+		</div>
+	</dialog>
+
+	<div class="app-container">
+		<!-- Sidebar -->
+		<aside class="sidebar" :class="{ 'hidden': !sidebarVisible }">
+			<!-- Empty state when no library -->
+			<div class="sidebar-empty" x-show="!libraryPath" x-cloak>
+				<div class="sidebar-empty-content">
+					<span x-html="icon('folder', 48)"></span>
+					<h3>No Music Library</h3>
+					<p>Scan a folder to add your music</p>
+					<button class="btn btn-primary scan-folder-btn" @click="scanFolder()">
+						<span x-html="icon('folder', 20)"></span>
+						<span>Scan Folder</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Normal sidebar when library exists -->
+			<div class="sidebar-inner" x-show="libraryPath">
+				<div class="sidebar-header">
+					<div class="tab-container">
+						<button 
+							class="tab-btn" 
+							:class="{ 'active': activeTab === 'playlists' }"
+							@click="activeTab = 'playlists'">
+							Playlists
+						</button>
+						<button 
+							class="tab-btn" 
+							:class="{ 'active': activeTab === 'songs' }"
+							@click="activeTab = 'songs'">
+							Songs
+						</button>
+					</div>
+				</div>
+
+				<div class="sidebar-content">
+				<!-- Playlists Tab -->
+				<template x-if="activeTab === 'playlists'">
+					<div>
+						<div class="collection-label">Your Library</div>
+						
+						<!-- All Songs (always first) -->
+						<a href="#" class="playlist-item" :class="{ 'active': currentPlaylistId === null }" @click.prevent="selectPlaylist(null)">
+							<div class="playlist-icon">
+								<span x-html="icon('music2', 20)"></span>
+							</div>
+							<div class="playlist-info">
+								<span class="playlist-name">All Songs</span>
+								<span class="playlist-meta" x-text="libraryTotal + ' songs'"></span>
+							</div>
+						</a>
+						
+						<template x-for="playlist in playlists.filter(p => !p.is_system)" :key="playlist.id">
+							<a href="#" class="playlist-item" :class="{ 'active': currentPlaylistId === playlist.id }" @click.prevent="selectPlaylist(playlist.id)">
+								<div class="playlist-icon">
+									<span x-html="icon('listMusic', 20)"></span>
+								</div>
+								<div class="playlist-info">
+									<span class="playlist-name" x-text="playlist.name"></span>
+								</div>
+								<div class="playlist-actions">
+									<button class="icon-btn" @click.stop="openRenameModal(playlist)" title="Rename">
+										<span x-html="icon('edit', 16)"></span>
+									</button>
+									<button class="icon-btn" @click.stop="deletePlaylist(playlist.id)" title="Delete">
+										<span x-html="icon('trash', 16)"></span>
+									</button>
+								</div>
+							</a>
+						</template>
+					</div>
+				</template>
+
+				<!-- Songs Tab (shows current playlist songs) -->
+				<template x-if="activeTab === 'songs'">
+					<div class="songs-list">
+						<div class="collection-label">
+							<span x-text="currentPlaylistId === null ? 'All Songs' : playlists.find(p => p.id === currentPlaylistId)?.name"></span>
+							<span class="song-count" x-text="'(' + libraryTotal + ')'"></span>
+						</div>
+						
+						<template x-for="song in librarySongs" :key="song.id">
+							<a href="#" class="playlist-item" @click.prevent="playSong(song)">
+								<div class="playlist-icon">
+									<span x-html="icon('music2', 20)"></span>
+								</div>
+								<div class="playlist-info">
+									<span class="playlist-name" x-text="getDisplayTitle(song)"></span>
+									<span class="playlist-meta">
+										<span x-text="getDisplayArtist(song)"></span> • <span x-text="formatDuration(song.duration)"></span>
+									</span>
+								</div>
+							</a>
+						</template>
+						
+						<!-- Load more trigger -->
+						<div x-show="libraryOffset < libraryTotal" class="load-more">
+							<button class="btn btn-secondary" @click="loadMoreSongs()" x-show="!libraryLoading">
+								Load More
+							</button>
+							<span x-show="libraryLoading" x-html="icon('loader', 20)" class="spinner"></span>
+						</div>
+					</div>
+				</template>
+			</div>
+
+			<div class="sidebar-footer" x-show="libraryPath">
+				<button class="create-playlist-btn" @click="showCreatePlaylist = true">
+					<span x-html="icon('plus', 20)"></span>
+					<span>Create Playlist</span>
+				</button>
+			</div>
+			</div>
+		</aside>
+
+		<!-- Main Content -->
+		<main class="main-content">
+			<div class="player-container">
+				<div class="album-art-wrapper">
+					<img 
+						class="album-art" 
+						:src="currentTrack.albumArt" 
+						:alt="currentTrack.title + ' album art'" 
+					/>
+				</div>
+
+				<div class="track-info">
+					<h2 class="track-title" x-text="currentTrack.title"></h2>
+					<p class="track-artist" x-text="currentTrack.artist"></p>
+				</div>
+			</div>
+		</main>
+	</div>
+
+	<!-- Footer Controls -->
+	<footer class="footer-controls">
+		<div class="footer-left">
+			<div class="mini-album-art" :style="{ backgroundImage: 'url(' + currentTrack.albumArt + ')' }"></div>
+			<div class="mini-track-info">
+				<a href="#" class="mini-track-title" x-text="currentTrack.title"></a>
+				<a href="#" class="mini-track-artist" x-text="currentTrack.artist"></a>
+			</div>
+			<button class="icon-btn favorite-btn" :class="{ 'active': currentTrack.isFavorite }" @click="toggleFavorite">
+				<span x-html="icon('heart', 20)"></span>
+			</button>
+		</div>
+
+		<div class="footer-center">
+			<div class="playback-controls">
+				<button class="icon-btn" :class="{ 'active': shuffle }" @click="shuffle = !shuffle" title="Shuffle">
+					<span x-html="icon('shuffle', 20)"></span>
+				</button>
+				<button class="icon-btn icon-btn-lg" @click="previousTrack" title="Previous">
+					<span x-html="icon('skipBack', 28)"></span>
+				</button>
+				<button class="play-pause-btn" @click="togglePlay" title="Play/Pause">
+					<span x-html="isPlaying ? icon('pause', 24) : icon('play', 24)"></span>
+				</button>
+				<button class="icon-btn icon-btn-lg" @click="nextTrack" title="Next">
+					<span x-html="icon('skipForward', 28)"></span>
+				</button>
+				<button class="icon-btn" :class="{ 'active': repeat }" @click="repeat = !repeat" title="Repeat">
+					<span x-html="icon('repeat', 20)"></span>
+				</button>
+			</div>
+
+			<div class="footer-progress">
+				<span class="time-small" x-text="formatTime(currentTime)"></span>
+				<div class="progress-bar-small" @click="seekTo($event)" @mousedown="startProgressDrag($event)">
+					<div class="progress-fill-small" :class="{ 'no-transition': isDraggingProgress }" :style="{ width: progress + '%' }"></div>
+					<div class="progress-thumb" :style="{ left: progress + '%' }"></div>
+				</div>
+				<span class="time-small" x-text="formatTime(duration)"></span>
+			</div>
+		</div>
+
+		<div class="footer-right">
+			<div class="volume-control">
+				<div class="volume-icon" x-html="volumeIcon"></div>
+				<div class="volume-bar" @click="setVolume($event)" @mousedown="startVolumeDrag($event)">
+					<div class="volume-fill" :class="{ 'no-transition': isDraggingVolume }" :style="{ width: volume + '%' }"></div>
+				</div>
+			</div>
+			<button class="icon-btn" @click="sidebarVisible = !sidebarVisible" title="Toggle Sidebar">
+				<span x-html="sidebarVisible ? icon('panelRightClose', 20) : icon('panelRightOpen', 20)"></span>
+			</button>
+			<button class="icon-btn" @click="$refs.settingsDialog.showModal()" title="Settings">
+				<span x-html="icon('settings', 20)"></span>
+			</button>
+		</div>
+	</footer>
+</body>
+
 </html>
