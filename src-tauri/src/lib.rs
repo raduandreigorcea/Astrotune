@@ -114,12 +114,15 @@ async fn list_playlists(state: State<'_, DbPath>) -> AppResult<Vec<PlaylistRow>>
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_db(&path)?;
         let mut rows = Vec::new();
-        for (id, name, cover_image_path, is_system) in db::list_playlists(&conn)? {
+        for (id, name, description, cover_image_path, is_system, song_count, total_duration) in db::list_playlists(&conn)? {
             rows.push(PlaylistRow {
                 id,
                 name,
+                description,
                 is_system,
                 cover_image_path,
+                song_count,
+                total_duration,
             });
         }
         Ok::<_, AppError>(rows)
@@ -153,11 +156,11 @@ async fn query_songs(
 }
 
 #[tauri::command]
-async fn create_playlist(state: State<'_, DbPath>, name: String, cover: Option<String>) -> AppResult<i64> {
+async fn create_playlist(state: State<'_, DbPath>, name: String, description: Option<String>, cover: Option<String>) -> AppResult<i64> {
     let path = state.0.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_db(&path)?;
-        db::create_playlist(&conn, &name, cover.as_deref())
+        db::create_playlist(&conn, &name, description.as_deref(), cover.as_deref())
     })
     .await
     .unwrap()
@@ -169,6 +172,17 @@ async fn rename_playlist(state: State<'_, DbPath>, id: i64, name: String) -> App
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db::open_db(&path)?;
         db::rename_playlist(&conn, id, &name)
+    })
+    .await
+    .unwrap()
+}
+
+#[tauri::command]
+async fn update_playlist_description(state: State<'_, DbPath>, id: i64, description: Option<String>) -> AppResult<()> {
+    let path = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_db(&path)?;
+        db::update_playlist_description(&conn, id, description.as_deref())
     })
     .await
     .unwrap()
@@ -332,6 +346,7 @@ pub fn run() {
             query_songs,
             create_playlist,
             rename_playlist,
+            update_playlist_description,
             delete_playlist,
             update_playlist_cover,
             add_song_to_playlist,

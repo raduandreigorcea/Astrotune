@@ -52,6 +52,7 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
         CREATE TABLE IF NOT EXISTS playlists (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
+            description TEXT,
             cover_image_path TEXT,
             is_system INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER DEFAULT (strftime('%s', 'now')),
@@ -97,6 +98,20 @@ pub fn init_db(conn: &Connection) -> AppResult<()> {
 
     if !has_cover_art_column {
         conn.execute("ALTER TABLE songs ADD COLUMN cover_art_path TEXT", [])?;
+    }
+
+    // Migration: Add description column to playlists if it doesn't exist
+    let has_description_column: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('playlists') WHERE name = 'description'",
+            [],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|count| count > 0)
+        .unwrap_or(false);
+
+    if !has_description_column {
+        conn.execute("ALTER TABLE playlists ADD COLUMN description TEXT", [])?;
     }
 
     // Create the system 'All Songs' playlist if it doesn't exist
@@ -286,9 +301,21 @@ pub fn clear_library(conn: &Connection) -> AppResult<()> {
 // ============================================================================
 
 /// List all playlists
-pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, Option<String>, bool)>> {
+pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, Option<String>, Option<String>, bool, i64, f64)>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT id, name, cover_image_path, is_system FROM playlists ORDER BY is_system DESC, name COLLATE NOCASE"
+        "SELECT 
+            p.id, 
+            p.name, 
+            p.description, 
+            p.cover_image_path, 
+            p.is_system,
+            COALESCE(COUNT(ps.song_id), 0) as song_count,
+            COALESCE(SUM(s.duration), 0) as total_duration
+         FROM playlists p
+         LEFT JOIN playlist_songs ps ON p.id = ps.playlist_id
+         LEFT JOIN songs s ON ps.song_id = s.id
+         GROUP BY p.id, p.name, p.description, p.cover_image_path, p.is_system
+         ORDER BY p.is_system DESC, p.name COLLATE NOCASE"
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -296,7 +323,10 @@ pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, Option<S
             row.get::<_, i64>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, Option<String>>(2)?,
-            row.get::<_, bool>(3)?
+            row.get::<_, Option<String>>(3)?,
+            row.get::<_, bool>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, f64>(6)?
         ))
     })?;
 
@@ -308,16 +338,39 @@ pub fn list_playlists(conn: &Connection) -> AppResult<Vec<(i64, String, Option<S
 }
 
 /// Create a new playlist
-pub fn create_playlist(conn: &Connection, name: &str, cover_image_path: Option<&str>) -> AppResult<i64> {
+pub fn create_playlist(conn: &Connection, name: &str, description: Option<&str>, cover_image_path: Option<&str>) -> AppResult<i64> {
+    // Validate name length
+    if name.is_empty() {
+        return Err(AppError::InvalidOperation("Playlist name cannot be empty".to_string()));
+    }
+    if name.len() > 50 {
+        return Err(AppError::InvalidOperation("Playlist name cannot exceed 50 characters".to_string()));
+    }
+    
+    // Validate description length
+    if let Some(desc) = description {
+        if desc.len() > 100 {
+            return Err(AppError::InvalidOperation("Playlist description cannot exceed 100 characters".to_string()));
+        }
+    }
+    
     conn.execute(
-        "INSERT INTO playlists (name, cover_image_path, is_system) VALUES (?1, ?2, 0)",
-        params![name, cover_image_path],
+        "INSERT INTO playlists (name, description, cover_image_path, is_system) VALUES (?1, ?2, ?3, 0)",
+        params![name, description, cover_image_path],
     )?;
     Ok(conn.last_insert_rowid())
 }
 
 /// Rename a playlist (only non-system playlists)
 pub fn rename_playlist(conn: &Connection, id: i64, name: &str) -> AppResult<()> {
+    // Validate name length
+    if name.is_empty() {
+        return Err(AppError::InvalidOperation("Playlist name cannot be empty".to_string()));
+    }
+    if name.len() > 50 {
+        return Err(AppError::InvalidOperation("Playlist name cannot exceed 50 characters".to_string()));
+    }
+    
     let is_system: bool = conn
         .query_row("SELECT is_system FROM playlists WHERE id = ?1", params![id], |row| {
             row.get(0)
@@ -365,7 +418,19 @@ pub fn update_playlist_cover(conn: &Connection, id: i64, cover_image_path: Optio
     )?;
     Ok(())
 }
-
+/// Update a playlist's description
+pub fn update_playlist_description(conn: &Connection, id: i64, description: Option<&str>) -> AppResult<()> {    // Validate description length
+    if let Some(desc) = description {
+        if desc.len() > 100 {
+            return Err(AppError::InvalidOperation("Playlist description cannot exceed 100 characters".to_string()));
+        }
+    }
+        conn.execute(
+        "UPDATE playlists SET description = ?1 WHERE id = ?2 AND is_system = 0",
+        params![description, id],
+    )?;
+    Ok(())
+}
 /// Get the system "All Songs" playlist ID
 pub fn get_all_songs_playlist_id(conn: &Connection) -> AppResult<i64> {
     let id: i64 = conn.query_row(

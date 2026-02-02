@@ -23,9 +23,10 @@ pub struct SongRow {
 pub struct PlaylistRow {
     pub id: i64,
     pub name: String,
+    pub description: Option<String>,
     pub cover_image_path: Option<String>,
-    pub is_system: bool,
-}
+    pub is_system: bool,    pub song_count: i64,
+    pub total_duration: f64,}
 
 /// Paginated response for songs
 #[derive(Debug, Serialize, Deserialize)]

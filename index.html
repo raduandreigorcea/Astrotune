@@ -63,12 +63,26 @@
 							</template>
 						</div>
 						<div class="playlist-form-name">
-							<input 
-								type="text" 
-								class="modal-input" 
-								placeholder="Playlist name" 
-								x-model="newPlaylistName"
-							/>
+							<div class="input-with-counter">
+								<input 
+									type="text" 
+									class="modal-input" 
+									placeholder="Playlist name" 
+									x-model="newPlaylistName"
+									maxlength="50"
+								/>
+								<span class="char-counter" x-text="newPlaylistName.length + '/50'"></span>
+							</div>
+							<div class="input-with-counter">
+								<textarea
+									class="modal-input playlist-description-input"
+									placeholder="Description (optional)"
+									x-model="newPlaylistDescription"
+									rows="2"
+									maxlength="100"
+								></textarea>
+								<span class="char-counter" x-text="newPlaylistDescription.length + '/100'"></span>
+							</div>
 						</div>
 					</div>
 
@@ -122,27 +136,122 @@
 		</div>
 	</div>
 
-	<!-- Rename Playlist Modal -->
-	<div class="modal-overlay" x-show="showRenamePlaylist" x-cloak @click.self="showRenamePlaylist = false">
-		<div class="modal">
+	<!-- Edit Playlist Modal -->
+	<div class="modal-overlay" x-show="showEditPlaylist" x-cloak @click.self="showEditPlaylist = false">
+		<div class="modal modal-lg">
 			<div class="modal-header">
-				<h3>Rename Playlist</h3>
-				<button class="icon-btn" @click="showRenamePlaylist = false">
+				<h3>Edit Playlist</h3>
+				<button class="icon-btn" @click="showEditPlaylist = false">
 					<span x-html="icon('x', 20)"></span>
 				</button>
 			</div>
 			<div class="modal-body">
-				<input 
-					type="text" 
-					class="modal-input" 
-					placeholder="Playlist name" 
-					x-model="renamePlaylistName"
-					@keyup.enter="renamePlaylist()"
-				/>
+				<div class="playlist-form">
+					<!-- Cover and Name Section -->
+					<div class="playlist-form-header">
+						<div class="playlist-cover-picker" @click="selectEditPlaylistCover()">
+							<template x-if="editPlaylistCoverLoading">
+								<div class="cover-preview cover-loading" x-html="icon('loader', 40)"></div>
+							</template>
+							<template x-if="!editPlaylistCoverLoading && editPlaylistCover">
+								<img :src="getEditPlaylistCoverUrl()" alt="Cover" class="cover-preview" />
+							</template>
+							<template x-if="!editPlaylistCoverLoading && !editPlaylistCover">
+								<div class="cover-placeholder">
+									<span x-html="icon('listMusic', 32)"></span>
+									<span class="cover-hint">Add Cover</span>
+								</div>
+							</template>
+						</div>
+						<div class="playlist-form-name">
+						<div class="input-with-counter">
+							<input 
+								type="text" 
+								class="modal-input" 
+								placeholder="Playlist name" 
+								x-model="editPlaylistName"
+								maxlength="50"
+							/>
+							<span class="char-counter" x-text="editPlaylistName.length + '/50'"></span>
+						</div>
+						<div class="input-with-counter">
+							<textarea
+								class="modal-input playlist-description-input"
+								placeholder="Description (optional)"
+								x-model="editPlaylistDescription"
+								rows="2"
+								maxlength="100"
+							></textarea>
+							<span class="char-counter" x-text="editPlaylistDescription.length + '/100'"></span>
+						</div>
+						</div>
+					</div>
+
+					<!-- Song Selection Section -->
+					<div class="playlist-song-selector">
+						<div class="song-selector-header">
+							<span class="song-selector-title">Songs</span>
+							<span class="song-selector-count" x-text="editPlaylistSongIds.length + ' selected'"></span>
+						</div>
+						<input 
+							type="text" 
+							class="modal-input song-search" 
+							placeholder="Search songs..." 
+							x-model="playlistSongSearch"
+						/>
+						<div class="song-selector-list">
+							<template x-for="song in filterEditPlaylistSongs()" :key="song.id">
+								<label class="song-selector-item" :class="{ 'selected': editPlaylistSongIds.includes(song.id) }">
+									<input 
+										type="checkbox" 
+										:checked="editPlaylistSongIds.includes(song.id)"
+										@change="toggleSongForEditPlaylist(song.id)"
+									/>
+									<div class="song-selector-cover">
+										<img 
+											x-show="getCoverArtUrl(song)" 
+											:src="getCoverArtUrl(song)" 
+											alt="Cover" 
+											class="cover-thumb"
+										/>
+										<span x-show="!getCoverArtUrl(song)" x-html="icon('music2', 16)"></span>
+									</div>
+									<div class="song-selector-info">
+										<span class="song-selector-title" x-text="getDisplayTitle(song)"></span>
+										<span class="song-selector-artist" x-text="getDisplayArtist(song)"></span>
+									</div>
+									<span class="song-selector-duration" x-text="formatDuration(song.duration)"></span>
+								</label>
+							</template>
+							<div x-show="filterEditPlaylistSongs().length === 0" class="song-selector-empty">
+								<span x-text="availableSongsForPlaylist.length === 0 ? 'No songs in library' : 'No songs match your search'"></span>
+							</div>
+						</div>
+					</div>
+				</div>
 			</div>
 			<div class="modal-footer">
-				<button class="btn btn-secondary" @click="showRenamePlaylist = false">Cancel</button>
-				<button class="btn btn-primary" @click="renamePlaylist()">Rename</button>
+				<button class="btn btn-secondary" @click="showEditPlaylist = false">Cancel</button>
+				<button class="btn btn-primary" @click="saveEditedPlaylist()" :disabled="!editPlaylistName.trim()">Save</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- Delete Confirmation Modal -->
+	<div class="modal-overlay" x-show="showDeleteConfirmation" x-cloak @click.self="showDeleteConfirmation = false">
+		<div class="modal modal-sm">
+			<div class="modal-header">
+				<h3>Delete Playlist</h3>
+				<button class="icon-btn" @click="showDeleteConfirmation = false">
+					<span x-html="icon('x', 20)"></span>
+				</button>
+			</div>
+			<div class="modal-body">
+				<p>Are you sure you want to delete this playlist? This action cannot be undone.</p>
+			</div>
+			<div class="modal-footer">
+				<button class="btn btn-secondary" @click="showDeleteConfirmation = false">Cancel</button>
+				<button class="btn btn-danger" @click="confirmDeletePlaylist()">Delete</button>
 			</div>
 		</div>
 	</div>
@@ -192,7 +301,9 @@
 
 	<div class="app-container">
 		<!-- Sidebar -->
-		<aside class="sidebar" :class="{ 'hidden': !sidebarVisible }">
+		<aside class="sidebar" :class="{ 'hidden': !sidebarVisible }" :style="{ width: sidebarWidth + 'px' }">
+			<!-- Sidebar resize handle -->
+			<div class="sidebar-resize-handle" @mousedown="startSidebarResize($event)"></div>
 			<!-- Empty state when no library -->
 			<div class="sidebar-empty" x-show="!libraryPath" x-cloak>
 				<div class="sidebar-empty-content">
@@ -238,7 +349,7 @@
 							</div>
 							<div class="playlist-info">
 								<span class="playlist-name">All Songs</span>
-								<span class="playlist-meta" x-text="libraryTotal + ' songs'"></span>
+							<span class="playlist-meta" x-text="totalLibraryCount + ' songs'"></span>
 							</div>
 						</a>
 						
@@ -250,16 +361,21 @@
 								</div>
 								<div class="playlist-info">
 									<span class="playlist-name" x-text="playlist.name"></span>
+									<span class="playlist-meta playlist-desc" x-show="playlist.description" x-text="playlist.description"></span>
+									<span class="playlist-meta playlist-stats" x-text="playlist.song_count + ' songs • ' + formatMinutes(playlist.total_duration)"></span>
 								</div>
 								<div class="playlist-actions">
-									<button class="icon-btn" @click.stop="openRenameModal(playlist)" title="Rename">
-										<span x-html="icon('edit', 16)"></span>
+									<button class="icon-btn" @click.stop="openEditPlaylistModal(playlist)" title="Edit">
+										<span x-html="icon('pencil', 16)"></span>
 									</button>
 									<button class="icon-btn" @click.stop="deletePlaylist(playlist.id)" title="Delete">
 										<span x-html="icon('trash', 16)"></span>
 									</button>
-								</div>
-							</a>
+								</div>							<div class="playlist-menu-wrapper">
+								<button class="icon-btn playlist-menu-btn" @click.stop="togglePlaylistMenu(playlist.id, $event)" :class="{ 'active': openPlaylistMenuId === playlist.id }" title="More">
+									<span x-html="icon('ellipsis', 16)"></span>
+								</button>
+							</div>							</a>
 						</template>
 					</div>
 				</template>
@@ -268,8 +384,13 @@
 				<template x-if="activeTab === 'songs'">
 					<div class="songs-list">
 						<div class="collection-label">
-							<span x-text="currentPlaylistId === null ? 'All Songs' : playlists.find(p => p.id === currentPlaylistId)?.name"></span>
-							<span class="song-count" x-text="'(' + libraryTotal + ')'"></span>
+							<div class="collection-title-section">
+								<div class="collection-title-line">
+									<span class="collection-title" x-text="currentPlaylistId === null ? 'All Songs' : playlists.find(p => p.id === currentPlaylistId)?.name"></span>
+									<span class="song-count" x-text="'(' + libraryTotal + ' songs • ' + formatMinutes(currentPlaylistId === null ? totalLibraryDuration : (playlists.find(p => p.id === currentPlaylistId)?.total_duration || 0)) + ')'"></span>
+								</div>
+								<span class="collection-description" x-show="currentPlaylistId !== null && playlists.find(p => p.id === currentPlaylistId)?.description" x-text="playlists.find(p => p.id === currentPlaylistId)?.description"></span>
+							</div>
 						</div>
 						
 						<template x-for="song in librarySongs" :key="song.id">
@@ -285,9 +406,16 @@
 								</div>
 								<div class="playlist-info">
 									<span class="playlist-name" x-text="getDisplayTitle(song)"></span>
-									<span class="playlist-meta">
-										<span x-text="getDisplayArtist(song)"></span> • <span x-text="formatDuration(song.duration)"></span>
-									</span>
+									<div class="playlist-meta">
+										<span class="playlist-artist" x-text="getDisplayArtist(song)"></span>
+										<span class="playlist-separator">•</span>
+										<span class="playlist-duration" x-text="formatDuration(song.duration)"></span>
+									</div>
+								</div>
+								<div class="song-menu-wrapper">
+									<button class="icon-btn song-menu-btn" @click.stop="toggleSongMenu(song.id, $event)" :class="{ 'active': openSongMenuId === song.id }" title="More">
+										<span x-html="icon('ellipsis', 16)"></span>
+									</button>
 								</div>
 							</a>
 						</template>
@@ -394,6 +522,37 @@
 			</button>
 		</div>
 	</footer>
+
+	<!-- Global Playlist Context Menu Portal -->
+	<div id="playlist-menu-portal" class="playlist-menu-portal">
+		<div class="playlist-menu" x-show="openPlaylistMenuId !== null" @click.away="openPlaylistMenuId = null" x-cloak :style="{ left: playlistMenuPosition.x + 'px', top: playlistMenuPosition.y + 'px' }">
+			<button @click.stop="openEditPlaylistModal(playlists.find(p => p.id === openPlaylistMenuId)); openPlaylistMenuId = null">
+				<span x-html="icon('pencil', 16)"></span>
+				<span>Edit</span>
+			</button>
+			<button @click.stop="deletePlaylist(openPlaylistMenuId); openPlaylistMenuId = null">
+				<span x-html="icon('trash', 16)"></span>
+				<span>Delete</span>
+			</button>
+		</div>
+	</div>
+
+	<!-- Global Song Context Menu Portal -->
+	<div id="song-menu-portal" class="song-menu-portal">
+		<div class="song-menu" x-show="openSongMenuId !== null" @click.away="openSongMenuId = null" x-cloak :style="{ left: songMenuPosition.x + 'px', top: songMenuPosition.y + 'px' }">
+			<button @click.stop="toggleSongPlaylistSubmenu(openSongMenuId)">
+				<span x-html="icon('plus', 16)"></span>
+				<span>Add to Playlist</span>
+			</button>
+			<div class="song-submenu" x-show="openSongPlaylistSubmenuId === openSongMenuId" :style="{ left: '100%', top: 0 }">
+				<template x-for="playlist in playlists" :key="playlist.id">
+					<button @click.stop="addSongToPlaylist(openSongMenuId, playlist.id); openSongMenuId = null">
+						<span x-text="playlist.name"></span>
+					</button>
+				</template>
+			</div>
+		</div>
+	</div>
 </body>
 
 </html>

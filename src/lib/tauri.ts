@@ -28,8 +28,11 @@ export interface Song {
 export interface Playlist {
   id: number;
   name: string;
+  description: string | null;
   cover_image_path: string | null;
   is_system: boolean;
+  song_count: number;
+  total_duration: number;
 }
 
 export interface PagedSongs {
@@ -123,14 +126,15 @@ export async function querySongs(
 }
 
 /**
- * Create a new playlist with optional cover and songs
+ * Create a new playlist with optional description, cover and songs
  */
 export async function createPlaylist(
-  name: string, 
-  cover?: string | null,
-  songIds?: number[]
+  name: string,
+  description: string | null,
+  cover: string | null,
+  songIds: number[]
 ): Promise<number> {
-  const playlistId = await invoke<number>('create_playlist', { name, cover });
+  const playlistId = await invoke<number>('create_playlist', { name, description, cover });
   
   // Add songs if provided
   if (songIds && songIds.length > 0) {
@@ -145,6 +149,13 @@ export async function createPlaylist(
  */
 export async function renamePlaylist(id: number, name: string): Promise<void> {
   return invoke('rename_playlist', { id, name });
+}
+
+/**
+ * Update a playlist's description
+ */
+export async function updatePlaylistDescription(id: number, description: string | null): Promise<void> {
+  return invoke('update_playlist_description', { id, description });
 }
 
 /**

@@ -22,6 +22,8 @@ import volumeXIcon from './assets/volume-x.svg?raw';
 import volumeIcon from './assets/volume.svg?raw';
 import folderIcon from './assets/folder.svg?raw';
 import trashIcon from './assets/trash-2.svg?raw';
+import pencilIcon from './assets/pencil.svg?raw';
+import ellipsisIcon from './assets/ellipsis.svg?raw';
 
 // Icons object for easy access
 const icons = {
@@ -44,6 +46,8 @@ const icons = {
   volume: volumeIcon,
   folder: folderIcon,
   trash: trashIcon,
+  pencil: pencilIcon,
+  ellipsis: ellipsisIcon,
   plus: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>`,
   x: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`,
   edit: `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>`,
@@ -78,6 +82,13 @@ interface MusicPlayerState {
   // UI State
   activeTab: 'playlists' | 'songs';
   sidebarVisible: boolean;
+  sidebarWidth: number;
+  openPlaylistMenuId: number | null;
+  openSongMenuId: number | null;
+  openSongPlaylistSubmenuId: number | null;
+  playlistMenuPosition: { x: number; y: number };
+  songMenuPosition: { x: number; y: number };
+  songSubmenuPosition: { x: number; y: number };
   settingsOpen: boolean;
   
   // Config State
@@ -98,6 +109,8 @@ interface MusicPlayerState {
   currentPlaylistId: number | null;
   librarySongs: LibrarySong[];
   libraryTotal: number;
+  totalLibraryCount: number;
+  totalLibraryDuration: number;
   libraryLoading: boolean;
   libraryOffset: number;
   
@@ -108,18 +121,26 @@ interface MusicPlayerState {
   // Modal State
   showCreatePlaylist: boolean;
   newPlaylistName: string;
+  newPlaylistDescription: string;
   newPlaylistCover: string | null;
   newPlaylistCoverLoading: boolean;
   newPlaylistSongIds: number[];
   availableSongsForPlaylist: LibrarySong[];
   playlistSongSearch: string;
-  showRenamePlaylist: boolean;
-  renamePlaylistId: number | null;
-  renamePlaylistName: string;
+  showEditPlaylist: boolean;
+  editPlaylistId: number | null;
+  editPlaylistName: string;
+  editPlaylistDescription: string;
+  editPlaylistCover: string | null;
+  editPlaylistCoverLoading: boolean;
+  editPlaylistSongIds: number[];
+  showDeleteConfirmation: boolean;
+  playlistToDelete: number | null;
   
   // Drag State
   isDraggingProgress: boolean;
   isDraggingVolume: boolean;
+  isResizingSidebar: boolean;
   
   // Icons & Utils
   icons: typeof icons;
@@ -142,9 +163,19 @@ interface MusicPlayerState {
   getNewPlaylistCoverUrl: () => string | null;
   toggleSongForPlaylist: (songId: number) => void;
   filterPlaylistSongs: () => LibrarySong[];
-  renamePlaylist: () => Promise<void>;
-  deletePlaylist: (id: number) => Promise<void>;
-  openRenameModal: (playlist: Playlist) => void;
+  openEditPlaylistModal: (playlist: Playlist) => Promise<void>;
+  saveEditedPlaylist: () => Promise<void>;
+  deletePlaylist: (id: number) => void;
+  confirmDeletePlaylist: () => Promise<void>;
+  togglePlaylistMenu: (id: number) => void;
+  selectEditPlaylistCover: () => Promise<void>;
+  getEditPlaylistCoverUrl: () => string | null;
+  toggleSongForEditPlaylist: (songId: number) => void;
+  filterEditPlaylistSongs: () => LibrarySong[];
+  toggleSongMenu: (songId: number) => void;
+  toggleSongPlaylistSubmenu: (songId: number) => void;
+  addSongToPlaylist: (songId: number, playlistId: number) => Promise<void>;
+  formatMinutes: (seconds: number) => string;
   
   // Playback Methods
   togglePlay: () => void;
@@ -158,6 +189,7 @@ interface MusicPlayerState {
   setVolume: (event: MouseEvent) => void;
   startProgressDrag: (event: MouseEvent) => void;
   startVolumeDrag: (event: MouseEvent) => void;
+  startSidebarResize: (event: MouseEvent) => void;
   handleDrag: (event: MouseEvent) => void;
   stopDrag: () => void;
   
@@ -179,6 +211,13 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     // UI State
     activeTab: 'playlists',
     sidebarVisible: true,
+    sidebarWidth: 280,
+    openPlaylistMenuId: null,
+    openSongMenuId: null,
+    openSongPlaylistSubmenuId: null,
+    playlistMenuPosition: { x: 0, y: 0 },
+    songMenuPosition: { x: 0, y: 0 },
+    songSubmenuPosition: { x: 0, y: 0 },
     settingsOpen: false,
     
     // Playback State
@@ -204,6 +243,8 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     currentPlaylistId: null,
     librarySongs: [],
     libraryTotal: 0,
+    totalLibraryCount: 0,
+    totalLibraryDuration: 0,
     libraryLoading: false,
     libraryOffset: 0,
     
@@ -214,18 +255,26 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     // Modal State
     showCreatePlaylist: false,
     newPlaylistName: '',
+    newPlaylistDescription: '',
     newPlaylistCover: null,
     newPlaylistCoverLoading: false,
     newPlaylistSongIds: [],
     availableSongsForPlaylist: [],
     playlistSongSearch: '',
-    showRenamePlaylist: false,
-    renamePlaylistId: null,
-    renamePlaylistName: '',
+    showEditPlaylist: false,
+    editPlaylistId: null,
+    editPlaylistName: '',
+    editPlaylistDescription: '',
+    editPlaylistCover: null,
+    editPlaylistCoverLoading: false,
+    editPlaylistSongIds: [],
+    showDeleteConfirmation: false,
+    playlistToDelete: null,
     
     // Drag State
     isDraggingProgress: false,
     isDraggingVolume: false,
+    isResizingSidebar: false,
     
     // Config State
     libraryPath: null,
@@ -234,6 +283,12 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
 
     async init() {
       try {
+        // Load saved sidebar width
+        const savedWidth = localStorage.getItem('sidebarWidth');
+        if (savedWidth) {
+          this.sidebarWidth = parseInt(savedWidth, 10);
+        }
+        
         // Initialize database
         await tauri.initDatabase();
         
@@ -286,6 +341,12 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
         const result = await tauri.querySongs(playlistId, 100, 0);
         this.librarySongs = result.songs;
         this.libraryTotal = result.total;
+        // Update totalLibraryCount when viewing all songs
+        if (playlistId === null) {
+          this.totalLibraryCount = result.total;
+          // Calculate total duration for all songs
+          this.totalLibraryDuration = result.songs.reduce((sum, song) => sum + (song.duration || 0), 0);
+        }
         this.libraryOffset = result.songs.length;
       } catch (error) {
         console.error('Failed to load songs:', error);
@@ -373,6 +434,7 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     async openCreatePlaylistModal() {
       // Reset modal state
       this.newPlaylistName = '';
+      this.newPlaylistDescription = '';
       this.newPlaylistCover = null;
       this.newPlaylistSongIds = [];
       this.playlistSongSearch = '';
@@ -458,10 +520,12 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
       try {
         await tauri.createPlaylist(
           this.newPlaylistName.trim(),
+          this.newPlaylistDescription.trim() || null,
           this.newPlaylistCover,
           this.newPlaylistSongIds
         );
         this.newPlaylistName = '';
+        this.newPlaylistDescription = '';
         this.newPlaylistCover = null;
         this.newPlaylistSongIds = [];
         this.availableSongsForPlaylist = [];
@@ -472,36 +536,207 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
       }
     },
 
-    openRenameModal(playlist: Playlist) {
-      this.renamePlaylistId = playlist.id;
-      this.renamePlaylistName = playlist.name;
-      this.showRenamePlaylist = true;
+    async openEditPlaylistModal(playlist: Playlist) {
+      this.editPlaylistId = playlist.id;
+      this.editPlaylistName = playlist.name;
+      this.editPlaylistDescription = playlist.description || '';
+      this.editPlaylistCover = playlist.cover_image_path;
+      this.playlistSongSearch = '';
+      
+      // Load current songs in this playlist
+      try {
+        const result = await tauri.querySongs(playlist.id, 10000, 0);
+        this.editPlaylistSongIds = result.songs.map(s => s.id);
+        
+        // Load all songs for selection
+        const allSongs = await tauri.querySongs(null, 10000, 0);
+        this.availableSongsForPlaylist = allSongs.songs;
+      } catch (error) {
+        console.error('Failed to load songs for playlist edit:', error);
+        this.availableSongsForPlaylist = [];
+        this.editPlaylistSongIds = [];
+      }
+      
+      this.showEditPlaylist = true;
     },
 
-    async renamePlaylist() {
-      if (!this.renamePlaylistId || !this.renamePlaylistName.trim()) return;
+    async saveEditedPlaylist() {
+      if (!this.editPlaylistId || !this.editPlaylistName.trim()) return;
       
       try {
-        await tauri.renamePlaylist(this.renamePlaylistId, this.renamePlaylistName.trim());
-        this.showRenamePlaylist = false;
-        this.renamePlaylistId = null;
-        this.renamePlaylistName = '';
+        // Update name
+        await tauri.renamePlaylist(this.editPlaylistId, this.editPlaylistName.trim());
+        
+        // Update description
+        await tauri.updatePlaylistDescription(this.editPlaylistId, this.editPlaylistDescription.trim() || null);
+        
+        // Update cover if changed
+        if (this.editPlaylistCover) {
+          await tauri.updatePlaylistCover(this.editPlaylistId, this.editPlaylistCover);
+        }
+        
+        // Update songs - get current songs and compare
+        const currentSongs = await tauri.querySongs(this.editPlaylistId, 10000, 0);
+        const currentSongIds = currentSongs.songs.map(s => s.id);
+        
+        // Remove songs that were unchecked
+        const songsToRemove = currentSongIds.filter(id => !this.editPlaylistSongIds.includes(id));
+        for (const songId of songsToRemove) {
+          await tauri.removeSongFromPlaylist(this.editPlaylistId, songId);
+        }
+        
+        // Add songs that were checked
+        const songsToAdd = this.editPlaylistSongIds.filter(id => !currentSongIds.includes(id));
+        if (songsToAdd.length > 0) {
+          await tauri.addSongsToPlaylist(this.editPlaylistId, songsToAdd);
+        }
+        
+        this.showEditPlaylist = false;
+        this.editPlaylistId = null;
+        this.editPlaylistName = '';
+        this.editPlaylistDescription = '';
+        this.editPlaylistCover = null;
+        this.editPlaylistSongIds = [];
         await this.loadPlaylists();
+        
+        // Reload current playlist if it's the one being edited
+        if (this.currentPlaylistId === this.editPlaylistId) {
+          await this.selectPlaylist(this.currentPlaylistId);
+        }
       } catch (error) {
-        console.error('Failed to rename playlist:', error);
+        console.error('Failed to update playlist:', error);
       }
     },
 
-    async deletePlaylist(id: number) {
-      if (!confirm('Are you sure you want to delete this playlist?')) return;
+    async selectEditPlaylistCover() {
+      const selected = await tauri.openImageDialog();
+      if (selected) {
+        try {
+          this.editPlaylistCoverLoading = true;
+          const coverPath = await tauri.saveResizedCoverImageFromPath(selected, 256);
+          this.editPlaylistCover = coverPath;
+        } catch (error) {
+          console.error('Failed to select cover image:', error);
+        } finally {
+          this.editPlaylistCoverLoading = false;
+        }
+      }
+    },
+
+    getEditPlaylistCoverUrl(): string | null {
+      if (!this.editPlaylistCover) return null;
+      return tauri.convertFileSrc(this.editPlaylistCover);
+    },
+
+    toggleSongForEditPlaylist(songId: number) {
+      const index = this.editPlaylistSongIds.indexOf(songId);
+      if (index === -1) {
+        this.editPlaylistSongIds.push(songId);
+      } else {
+        this.editPlaylistSongIds.splice(index, 1);
+      }
+    },
+
+    filterEditPlaylistSongs(): LibrarySong[] {
+      if (!this.playlistSongSearch.trim()) {
+        return this.availableSongsForPlaylist;
+      }
+      const search = this.playlistSongSearch.toLowerCase();
+      return this.availableSongsForPlaylist.filter(song => 
+        (song.title?.toLowerCase().includes(search)) ||
+        (song.artist?.toLowerCase().includes(search)) ||
+        (song.album?.toLowerCase().includes(search))
+      );
+    },
+
+    formatMinutes(seconds: number): string {
+      const totalMinutes = Math.floor(seconds / 60);
+      if (totalMinutes < 60) {
+        return `${totalMinutes} min`;
+      }
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return minutes > 0 ? `${hours} hr ${minutes} min` : `${hours} hr`;
+    },
+
+    deletePlaylist(id: number) {
+      this.playlistToDelete = id;
+      this.showDeleteConfirmation = true;
+    },
+
+    togglePlaylistMenu(id: number, event?: MouseEvent) {
+      if (this.openPlaylistMenuId === id) {
+        this.openPlaylistMenuId = null;
+      } else {
+        this.openPlaylistMenuId = id;
+        
+        // Calculate menu position if event provided
+        if (event) {
+          const button = event.target as HTMLElement;
+          const rect = button.getBoundingClientRect();
+          // Position menu at top-left of button
+          this.playlistMenuPosition = {
+            x: rect.left,
+            y: rect.top,
+          };
+        }
+      }
+    },
+
+    toggleSongMenu(id: number, event?: MouseEvent) {
+      if (this.openSongMenuId === id) {
+        this.openSongMenuId = null;
+      } else {
+        this.openSongMenuId = id;
+        this.openSongPlaylistSubmenuId = null;
+        
+        // Calculate menu position if event provided
+        if (event) {
+          const button = event.target as HTMLElement;
+          const rect = button.getBoundingClientRect();
+          // Position menu at top-left of button
+          this.songMenuPosition = {
+            x: rect.left,
+            y: rect.top,
+          };
+        }
+      }
+    },
+
+    toggleSongPlaylistSubmenu(songId: number) {
+      if (this.openSongPlaylistSubmenuId === songId) {
+        this.openSongPlaylistSubmenuId = null;
+      } else {
+        this.openSongPlaylistSubmenuId = songId;
+      }
+    },
+
+    async addSongToPlaylist(songId: number, playlistId: number) {
+      try {
+        await tauri.addSongsToPlaylist(playlistId, [songId]);
+        this.openSongMenuId = null;
+        this.openSongPlaylistSubmenuId = null;
+        // Reload the current playlist if one is selected to show the new addition
+        if (this.currentPlaylistId !== null) {
+          await this.selectPlaylist(this.currentPlaylistId);
+        }
+      } catch (error) {
+        console.error('Error adding song to playlist:', error);
+      }
+    },
+
+    async confirmDeletePlaylist() {
+      if (!this.playlistToDelete) return;
       
       try {
-        await tauri.deletePlaylist(id);
+        await tauri.deletePlaylist(this.playlistToDelete);
         await this.loadPlaylists();
         // If deleted playlist was selected, go back to all songs
-        if (this.currentPlaylistId === id) {
+        if (this.currentPlaylistId === this.playlistToDelete) {
           await this.selectPlaylist(null);
         }
+        this.showDeleteConfirmation = false;
+        this.playlistToDelete = null;
       } catch (error) {
         console.error('Failed to delete playlist:', error);
       }
@@ -593,6 +828,32 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
           this.volume = Math.max(0, Math.min(100, percentage));
         }
       }
+    },
+
+    startSidebarResize(event: MouseEvent) {
+      event.preventDefault();
+      this.isResizingSidebar = true;
+      const sidebar = document.querySelector('aside') as HTMLElement;
+      const startX = event.clientX;
+      const startWidth = sidebar.offsetWidth;
+      
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        if (!this.isResizingSidebar) return;
+        const diff = moveEvent.clientX - startX;
+        const newWidth = Math.max(200, Math.min(600, startWidth + diff));
+        this.sidebarWidth = newWidth;
+      };
+      
+      const handleMouseUp = () => {
+        this.isResizingSidebar = false;
+        document.removeEventListener('mousemove', handleMouseMove);
+        document.removeEventListener('mouseup', handleMouseUp);
+        // Save to localStorage
+        localStorage.setItem('sidebarWidth', this.sidebarWidth.toString());
+      };
+      
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
     },
 
     stopDrag() {
