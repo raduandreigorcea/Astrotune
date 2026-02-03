@@ -131,7 +131,7 @@
 			</div>
 			<div class="modal-footer">
 				<button class="btn btn-secondary" @click="showCreatePlaylist = false">Cancel</button>
-				<button class="btn btn-primary" @click="createPlaylist()" :disabled="!newPlaylistName.trim()">Create</button>
+				<button class="btn btn-primary" @click="createPlaylist()" :disabled="!newPlaylistName.trim() || newPlaylistCoverLoading">Create</button>
 			</div>
 		</div>
 	</div>
@@ -232,7 +232,7 @@
 			</div>
 			<div class="modal-footer">
 				<button class="btn btn-secondary" @click="showEditPlaylist = false">Cancel</button>
-				<button class="btn btn-primary" @click="saveEditedPlaylist()" :disabled="!editPlaylistName.trim()">Save</button>
+				<button class="btn btn-primary" @click="saveEditedPlaylist()" :disabled="!editPlaylistName.trim() || editPlaylistCoverLoading">Save</button>
 			</div>
 		</div>
 	</div>
@@ -352,18 +352,19 @@
 							<span class="playlist-meta" x-text="totalLibraryCount + ' songs'"></span>
 							</div>
 						</a>
-						
 						<template x-for="playlist in playlists.filter(p => !p.is_system)" :key="playlist.id">
-							<a href="#" class="playlist-item" :class="{ 'active': currentPlaylistId === playlist.id }" @click.prevent="selectPlaylist(playlist.id)">
-								<div class="playlist-icon">
-									<img x-show="getPlaylistCoverUrl(playlist)" :src="getPlaylistCoverUrl(playlist)" alt="Cover" class="cover-thumb" />
-									<span x-show="!getPlaylistCoverUrl(playlist)" x-html="icon('listMusic', 20)"></span>
-								</div>
-								<div class="playlist-info">
-									<span class="playlist-name" x-text="playlist.name"></span>
-									<span class="playlist-meta playlist-desc" x-show="playlist.description" x-text="playlist.description"></span>
-									<span class="playlist-meta playlist-stats" x-text="playlist.song_count + ' songs • ' + formatMinutes(playlist.total_duration)"></span>
-								</div>
+								<div class="playlist-item" :class="{ 'active': currentPlaylistId === playlist.id }" @click="selectPlaylist(playlist.id)">
+									<div class="playlist-icon">
+										<img x-show="getPlaylistCoverUrl(playlist)" :src="getPlaylistCoverUrl(playlist)" alt="Cover" class="cover-thumb" />
+										<span x-show="!getPlaylistCoverUrl(playlist)" x-html="icon('listMusic', 20)"></span>
+									</div>
+									<div class="playlist-info">
+										<span class="playlist-name" x-text="playlist.name"></span>
+										<template x-if="playlist.description">
+											<span class="playlist-meta playlist-desc" x-text="playlist.description"></span>
+										</template>
+										<span class="playlist-meta playlist-stats" x-text="playlist.song_count + ' songs • ' + formatMinutes(playlist.total_duration)"></span>
+									</div>
 								<div class="playlist-actions">
 									<button class="icon-btn" @click.stop="openEditPlaylistModal(playlist)" title="Edit">
 										<span x-html="icon('pencil', 16)"></span>
@@ -375,7 +376,8 @@
 								<button class="icon-btn playlist-menu-btn" @click.stop="togglePlaylistMenu(playlist.id, $event)" :class="{ 'active': openPlaylistMenuId === playlist.id }" title="More">
 									<span x-html="icon('ellipsis', 16)"></span>
 								</button>
-							</div>							</a>
+							</div>
+							</div>
 						</template>
 					</div>
 				</template>
@@ -543,14 +545,20 @@
 			<button @click.stop="toggleSongPlaylistSubmenu(openSongMenuId)">
 				<span x-html="icon('plus', 16)"></span>
 				<span>Add to Playlist</span>
+				<span style="margin-left: auto;">▶</span>
 			</button>
 			<div class="song-submenu" x-show="openSongPlaylistSubmenuId === openSongMenuId" :style="{ left: '100%', top: 0 }">
-				<template x-for="playlist in playlists" :key="playlist.id">
-					<button @click.stop="addSongToPlaylist(openSongMenuId, playlist.id); openSongMenuId = null">
+				<template x-for="playlist in playlists.filter(p => !p.is_system)" :key="playlist.id">
+					<button @click.stop="toggleSongPlaylistMembership(openSongMenuId, playlist.id)" class="playlist-checkbox-btn">
+						<input type="checkbox" :checked="getSongPlaylistIds(openSongMenuId).has(playlist.id)" readonly>
 						<span x-text="playlist.name"></span>
 					</button>
 				</template>
 			</div>
+			<button @click.stop="removeSongFromPlaylist(openSongMenuId, currentPlaylistId)" x-show="currentPlaylistId !== null">
+				<span x-html="icon('trash', 16)"></span>
+				<span>Remove from Playlist</span>
+			</button>
 		</div>
 	</div>
 </body>

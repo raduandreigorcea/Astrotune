@@ -570,6 +570,19 @@ pub fn reorder_playlist(conn: &Connection, playlist_id: i64, positions: &[(i64, 
     Ok(())
 }
 
+/// Get all playlists that contain a specific song
+#[allow(dead_code)]
+pub fn get_song_playlists(conn: &Connection, song_id: i64) -> AppResult<Vec<i64>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT playlist_id FROM playlist_songs WHERE song_id = ?1 ORDER BY playlist_id"
+    )?;
+
+    let playlist_ids = stmt.query_map(params![song_id], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+
+    Ok(playlist_ids)
+}
+
 // ============================================================================
 // TRANSACTION HELPERS
 // ============================================================================

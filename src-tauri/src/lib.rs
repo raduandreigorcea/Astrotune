@@ -264,6 +264,17 @@ async fn reorder_playlist(state: State<'_, DbPath>, payload: PlaylistPositions) 
 }
 
 #[tauri::command]
+async fn get_song_playlists(state: State<'_, DbPath>, song_id: i64) -> AppResult<Vec<i64>> {
+    let path = state.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let conn = db::open_db(&path)?;
+        db::get_song_playlists(&conn, song_id)
+    })
+    .await
+    .unwrap()
+}
+
+#[tauri::command]
 async fn scan_folder(
     app: tauri::AppHandle,
     db_state: State<'_, DbPath>,
@@ -353,6 +364,7 @@ pub fn run() {
             add_songs_to_playlist,
             remove_song_from_playlist,
             reorder_playlist,
+            get_song_playlists,
             scan_folder,
             retry_failed_scans,
             save_resized_cover_image,

@@ -209,6 +209,13 @@ export async function reorderPlaylist(
 }
 
 /**
+ * Get all playlists that contain a specific song
+ */
+export async function getSongPlaylists(songId: number): Promise<number[]> {
+  return invoke('get_song_playlists', { songId });
+}
+
+/**
  * Scan a folder for music files
  */
 export async function scanFolder(root: string): Promise<void> {

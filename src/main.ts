@@ -113,6 +113,7 @@ interface MusicPlayerState {
   totalLibraryDuration: number;
   libraryLoading: boolean;
   libraryOffset: number;
+  songPlaylistsMap: Map<number, Set<number>>; // Map of song ID to set of playlist IDs
   
   // Scanning State
   isScanning: boolean;
@@ -141,6 +142,8 @@ interface MusicPlayerState {
   isDraggingProgress: boolean;
   isDraggingVolume: boolean;
   isResizingSidebar: boolean;
+  draggedPlaylistId: number | null;
+  draggedOverPlaylistId: number | null;
   
   // Icons & Utils
   icons: typeof icons;
@@ -175,6 +178,10 @@ interface MusicPlayerState {
   toggleSongMenu: (songId: number) => void;
   toggleSongPlaylistSubmenu: (songId: number) => void;
   addSongToPlaylist: (songId: number, playlistId: number) => Promise<void>;
+  removeSongFromPlaylist: (songId: number, playlistId: number) => Promise<void>;
+  toggleSongPlaylistMembership: (songId: number, playlistId: number) => Promise<void>;
+  getSongPlaylistIds: (songId: number) => Set<number>;
+  loadSongPlaylists: (songId: number) => Promise<void>;
   formatMinutes: (seconds: number) => string;
   
   // Playback Methods
@@ -192,6 +199,9 @@ interface MusicPlayerState {
   startSidebarResize: (event: MouseEvent) => void;
   handleDrag: (event: MouseEvent) => void;
   stopDrag: () => void;
+  startPlaylistDrag: (playlistId: number) => void;
+  dragPlaylistOver: (playlistId: number) => void;
+  dropPlaylist: (targetId: number) => void;
   
   // Utilities
   formatTime: (seconds: number) => string;
@@ -247,6 +257,7 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     totalLibraryDuration: 0,
     libraryLoading: false,
     libraryOffset: 0,
+    songPlaylistsMap: new Map(),
     
     // Scanning State
     isScanning: false,
@@ -275,6 +286,8 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     isDraggingProgress: false,
     isDraggingVolume: false,
     isResizingSidebar: false,
+    draggedPlaylistId: null,
+    draggedOverPlaylistId: null,
     
     // Config State
     libraryPath: null,
@@ -708,14 +721,33 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
         this.openSongPlaylistSubmenuId = null;
       } else {
         this.openSongPlaylistSubmenuId = songId;
+        // Load playlists for this song when opening the submenu
+        this.loadSongPlaylists(songId);
       }
     },
 
     async addSongToPlaylist(songId: number, playlistId: number) {
       try {
+        // Get the song data to get its duration
+        const song = this.librarySongs.find(s => s.id === songId);
+        
         await tauri.addSongsToPlaylist(playlistId, [songId]);
         this.openSongMenuId = null;
         this.openSongPlaylistSubmenuId = null;
+        
+        // Update playlist stats
+        const playlist = this.playlists.find(p => p.id === playlistId);
+        if (playlist && song) {
+          playlist.song_count += 1;
+          playlist.total_duration += song.duration || 0;
+        }
+        
+        // Update the song playlists map
+        if (!this.songPlaylistsMap.has(songId)) {
+          this.songPlaylistsMap.set(songId, new Set());
+        }
+        this.songPlaylistsMap.get(songId)!.add(playlistId);
+        
         // Reload the current playlist if one is selected to show the new addition
         if (this.currentPlaylistId !== null) {
           await this.selectPlaylist(this.currentPlaylistId);
@@ -724,6 +756,59 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
         console.error('Error adding song to playlist:', error);
       }
     },
+
+    async removeSongFromPlaylist(songId: number, playlistId: number) {
+      try {
+        // Get the song data to get its duration
+        const song = this.librarySongs.find(s => s.id === songId);
+        
+        await tauri.removeSongFromPlaylist(playlistId, songId);
+        this.openSongMenuId = null;
+        this.openSongPlaylistSubmenuId = null;
+        
+        // Update playlist stats
+        const playlist = this.playlists.find(p => p.id === playlistId);
+        if (playlist && song) {
+          playlist.song_count -= 1;
+          playlist.total_duration -= song.duration || 0;
+        }
+        
+        // Update the song playlists map
+        if (this.songPlaylistsMap.has(songId)) {
+          this.songPlaylistsMap.get(songId)!.delete(playlistId);
+        }
+        
+        // Reload the current playlist if one is selected to show the removal
+        if (this.currentPlaylistId !== null) {
+          await this.selectPlaylist(this.currentPlaylistId);
+        }
+      } catch (error) {
+        console.error('Error removing song from playlist:', error);
+      }
+    },
+
+    async toggleSongPlaylistMembership(songId: number, playlistId: number) {
+      const playlistIds = this.getSongPlaylistIds(songId);
+      if (playlistIds.has(playlistId)) {
+        await this.removeSongFromPlaylist(songId, playlistId);
+      } else {
+        await this.addSongToPlaylist(songId, playlistId);
+      }
+    },
+
+    getSongPlaylistIds(songId: number): Set<number> {
+      return this.songPlaylistsMap.get(songId) || new Set();
+    },
+
+    async loadSongPlaylists(songId: number) {
+      try {
+        const playlistIds = await tauri.getSongPlaylists(songId);
+        this.songPlaylistsMap.set(songId, new Set(playlistIds));
+      } catch (error) {
+        console.error('Error loading song playlists:', error);
+      }
+    },
+
 
     async confirmDeletePlaylist() {
       if (!this.playlistToDelete) return;
@@ -859,6 +944,39 @@ Alpine.data('musicPlayer', (): MusicPlayerState => ({
     stopDrag() {
       this.isDraggingProgress = false;
       this.isDraggingVolume = false;
+    },
+
+    startPlaylistDrag(playlistId: number) {
+      this.draggedPlaylistId = playlistId;
+    },
+
+    dragPlaylistOver(playlistId: number) {
+      if (this.draggedPlaylistId === null || this.draggedPlaylistId === playlistId) return;
+      this.draggedOverPlaylistId = playlistId;
+    },
+
+    dropPlaylist(targetId: number) {
+      if (this.draggedPlaylistId === null || this.draggedPlaylistId === targetId) {
+        this.draggedPlaylistId = null;
+        this.draggedOverPlaylistId = null;
+        return;
+      }
+
+      const from = this.playlists.findIndex(p => p.id === this.draggedPlaylistId);
+      const to = this.playlists.findIndex(p => p.id === targetId);
+
+      if (from === -1 || to === -1) {
+        this.draggedPlaylistId = null;
+        this.draggedOverPlaylistId = null;
+        return;
+      }
+
+      // Remove from source and insert at destination
+      const [moved] = this.playlists.splice(from, 1);
+      this.playlists.splice(to, 0, moved);
+
+      this.draggedPlaylistId = null;
+      this.draggedOverPlaylistId = null;
     },
 
     formatTime(seconds: number): string {
